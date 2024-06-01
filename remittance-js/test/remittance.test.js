@@ -19,7 +19,7 @@ let assert = sinon.assert;
 chai.use(sinonChai);
 
 describe('Remittance Tests', () => {
-    let transactionContext, chaincodeStub, bank;
+    let transactionContext, chaincodeStub, bank, bank2;
     beforeEach(() => {
         transactionContext = new Context();
 
@@ -65,10 +65,17 @@ describe('Remittance Tests', () => {
 
         // KEB HANA BANK
         bank = {
-            agreements: [],
+            accounts: [],
             available: true,
             code: 'KOEXKRSEXXX',
             currencyCode: 'KRW',
+        };
+
+        bank2 = {
+            code: 'SHBKKRSEXXX',
+            currencyCode: 'KRW',
+            accounts: [],
+            available: true,
         };
     });
 
@@ -111,7 +118,6 @@ describe('Remittance Tests', () => {
             await remittance.RegisterBank(transactionContext, bank.code, bank.currencyCode);
 
             let ret = JSON.parse((await chaincodeStub.getState(bank.code)).toString());
-            console.log(ret);
             expect(ret).to.eql(bank);
         });
     });
@@ -135,6 +141,49 @@ describe('Remittance Tests', () => {
 
             let ret = JSON.parse(await chaincodeStub.getState(bank.code));
             expect(ret).to.eql(bank);
+        });
+    });
+
+    describe('Test CreateAccount', () => {
+        it('should return error on CreateAccount', async () => {
+            let remittance = new Remittance();
+
+            await remittance.RegisterBank(transactionContext, bank.code, bank.currencyCode);
+            await remittance.RegisterBank(transactionContext, bank2.code, bank2.currencyCode);
+            
+            try {
+                await remittance.CreateAccount(transactionContext, bank.code, bank2.code);
+                assert.fail(`The bank ${bank2.code} already exists on ${bank.code}`);
+            } catch (err) {
+                expect(err.message).to.equal(`The bank ${bank2.code} already exists on ${bank.code}`);
+            }
+        });
+
+        it('should return success on CreateAccount', async () => {
+            let remittance = new Remittance();
+
+            await remittance.RegisterBank(transactionContext, bank.code, bank.currencyCode);
+            await remittance.RegisterBank(transactionContext, bank2.code, bank2.currencyCode);
+
+            await remittance.CreateAccount(transactionContext, bank.code, bank2.code);
+
+            let ret = JSON.parse(await chaincodeStub.getState(bank.code));
+            expect(ret.accounts.find(b => b.code = bank2.code).code).to.eql(bank2.code);
+        });
+    });
+
+    describe('Test ApplyLiquidity', () => {
+        it('should return success on ApplyLiquidity', async () => {
+            let remittance = new Remittance();
+
+            await remittance.RegisterBank(transactionContext, bank.code, bank.currencyCode);
+            await remittance.RegisterBank(transactionContext, bank2.code, bank2.currencyCode);
+
+            await remittance.CreateAccount(transactionContext, bank.code, bank2.code);
+            await remittance.ApplyLiquidity(transactionContext, bank.code, bank2.code, 1000);
+
+            let ret = JSON.parse(await chaincodeStub.getState(bank.code));
+            expect(ret.accounts.find(b => b.code = bank2.code).liquidity).to.eql(1000);
         });
     });
 
