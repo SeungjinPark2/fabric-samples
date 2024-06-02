@@ -10,6 +10,8 @@
 const stringify  = require('json-stringify-deterministic');
 const sortKeysRecursive  = require('sort-keys-recursive');
 const { Contract } = require('fabric-contract-api');
+const { uuid } = require('uuidv4');
+const { BigNumber } = require('bignumber.js');
 
 class Remittance extends Contract {
     async RegisterBank(ctx, code, currencyCode) {
@@ -26,7 +28,7 @@ class Remittance extends Contract {
             accounts: [],
         };
 
-        await ctx.stub.putState(code, Buffer.from(stringify(sortKeysRecursive(bank))));
+        await ctx.stub.putState(`bank:${code}`, Buffer.from(stringify(sortKeysRecursive(bank))));
         return JSON.stringify(bank);
     }
 
@@ -43,8 +45,8 @@ class Remittance extends Contract {
         bank1.accounts.push({ code: bank2.code, currencyCode: bank2.currencyCode, liquidity: 0 });
         bank2.accounts.push({ code: bank1.code, currencyCode: bank1.currencyCode, liquidity: 0 });
 
-        await ctx.stub.putState(bank1.code, Buffer.from(stringify(sortKeysRecursive(bank1))));
-        await ctx.stub.putState(bank2.code, Buffer.from(stringify(sortKeysRecursive(bank2))));
+        await ctx.stub.putState(`bank:${bank1.code}`, Buffer.from(stringify(sortKeysRecursive(bank1))));
+        await ctx.stub.putState(`bank:${bank2.code}`, Buffer.from(stringify(sortKeysRecursive(bank2))));
     }
 
     // apply liquidity, liquidity can either be positive, negative
@@ -62,15 +64,107 @@ class Remittance extends Contract {
         }
 
         account.liquidity = calculated;
-        await ctx.stub.putState(bank.code, Buffer.from(stringify(sortKeysRecursive(bank))));
+        await ctx.stub.putState(`bank:${bank.code}`, Buffer.from(stringify(sortKeysRecursive(bank))));
     }
 
     async ReadBank(ctx, code) {
-        const bankJSON = await ctx.stub.getState(code); // get the bank from chaincode state
+        const bankJSON = await ctx.stub.getState(`bank:${code}`); // get the bank from chaincode state
         if (!bankJSON || bankJSON.length === 0) {
             throw new Error(`The asset ${code} does not exist`);
         }
         return bankJSON.toString();
+    }
+
+    async ReadTransaction(ctx, id) {
+        const txJson = await ctx.stub.getState(`transaction:${id}`); // get the bank from chaincode state
+        if (!txJson || txJson.length === 0) {
+            throw new Error(`The asset ${id} does not exist`);
+        }
+        return txJson.toString();
+    }
+
+    /*
+        sender{receiver}Info: {
+            name: string,
+            birthday: timestamp,
+            address: string,
+            phoneNumber: string,
+        };
+        participant: {
+            code: string,
+            approved: boolean,
+            type: 'sender' | 'intermediary' | 'receiver',
+            reason: string, // empty or reason with not approving
+        };
+        transaction: {
+            id: transaction_id,
+            senderInfo,
+            receiverInfo,
+            value: string,
+            participants: participant[],
+            status: 'pending' | 'failed' | 'done',
+            createTime: timestamp,
+            fxRates: [], // todo
+        };
+    */
+    async ProposeTransaction(ctx, senderInfo, receiverInfo, value, participants) {
+        let _value;
+        const _participants = [];
+        const id = uuid();
+
+        if (!Array.isArray(participants)) {
+            throw new Error(`Argument participants should be array`);
+        }
+        if (participants.filter(p => p.type === 'sender').length !== 1
+            || participants.filter(p => p.type === 'receiver').length !== 1
+            || participants[0].type !== 'sender'
+            || participants.pop().type !== 'receiver'
+        ) {
+            throw new Error(`Argument participants can have only one sender and receiver also first participant is sender and last one is receiver`);
+        } else {
+            for (const p of participants) {
+                if (['sender', 'intermediary', 'receiver'].find(t => t === p.type) == null) {
+                    throw new Error(`Participants should has type in sender, intermediary, receiver`);
+                }
+                const b = JSON.parse(await this.ReadBank(ctx, p.code));
+                _participants.push({
+                    code: b.code,
+                    approved: p.type === 'sender', // only sender is approved
+                    type: p.type,
+                    reason: '', // empty or reason with not approving
+                });
+            }
+        }
+        if (isNaN(value)) {
+            throw new Error(`Value should be number`);
+        } else {
+            _value = new BigNumber(value);
+            if (_value.lte(0)) {
+                throw new Error(`Value can not be negative`);
+            }
+        }
+
+        const transaction = {
+            id,
+            senderInfo: {
+                name: senderInfo.name,
+                birthday: senderInfo.birthday,
+                address: senderInfo.address,
+                phoneNumber: senderInfo.phoneNumber,
+            },
+            receiverInfo: {
+                name: receiverInfo.name,
+                birthday: receiverInfo.birthday,
+                address: receiverInfo.address,
+                phoneNumber: receiverInfo.phoneNumber,
+            },
+            value: _value.toString(),
+            participants: _participants,
+            createTime: Date.now(),
+        };
+
+        await ctx.stub.putState(`transaction:${id}`, Buffer.from(stringify(sortKeysRecursive(transaction))));
+        return id;
     }
 
     // UpdateAsset updates an existing asset in the world state with provided parameters.
@@ -108,7 +202,7 @@ class Remittance extends Contract {
     // }
 
     async BankExists(ctx, code) {
-        const bankJSON = await ctx.stub.getState(code);
+        const bankJSON = await ctx.stub.getState(`bank:${code}`);
         return bankJSON && bankJSON.length > 0;
     }
 

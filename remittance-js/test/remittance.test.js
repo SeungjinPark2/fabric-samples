@@ -19,7 +19,7 @@ let assert = sinon.assert;
 chai.use(sinonChai);
 
 describe('Remittance Tests', () => {
-    let transactionContext, chaincodeStub, bank, bank2;
+    let transactionContext, chaincodeStub, bank, bank2, bank3, senderInfo, receiverInfo, participants;
     beforeEach(() => {
         transactionContext = new Context();
 
@@ -77,27 +77,43 @@ describe('Remittance Tests', () => {
             accounts: [],
             available: true,
         };
+
+        bank3 = {
+            code: 'OOOOKRSEXXX',
+            currencyCode: 'USD',
+            accounts: [],
+            available: true,
+        };
+
+        senderInfo = {
+            name: 'Park',
+            birthday: Date.now(),
+            address: 'sample',
+            phoneNumber: 'sample',
+        };
+
+        receiverInfo = {
+            name: 'Jay',
+            birthday: Date.now(),
+            address: 'sample',
+            phoneNumber: 'sample',
+        };
+
+        participants = [
+            {
+                code: bank.code,
+                type: 'sender',
+            },
+            {
+                code: bank2.code,
+                type: 'intermediary',
+            },
+            {
+                code: bank3.code,
+                type: 'receiver',
+            }
+        ];
     });
-
-    //describe('Test InitLedger', () => {
-    //    it('should return error on InitLedger', async () => {
-    //        chaincodeStub.putState.rejects('failed inserting key');
-    //        let remittance = new Remittance();
-    //        try {
-    //            await remittance.InitLedger(transactionContext);
-    //            assert.fail('InitLedger should have failed');
-    //        } catch (err) {
-    //            expect(err.name).to.equal('failed inserting key');
-    //        }
-    //    });
-
-    //    it('should return success on InitLedger', async () => {
-    //        let remittance = new Remittance();
-    //        await remittance.InitLedger(transactionContext);
-    //        let ret = JSON.parse((await chaincodeStub.getState('bank1')).toString());
-    //        expect(ret).to.eql(Object.assign({docType: 'bank'}, bank));
-    //    });
-    //});
 
     describe('Test RegisterBank', () => {
         it('should return error on RegisterBank', async () => {
@@ -117,7 +133,7 @@ describe('Remittance Tests', () => {
 
             await remittance.RegisterBank(transactionContext, bank.code, bank.currencyCode);
 
-            let ret = JSON.parse((await chaincodeStub.getState(bank.code)).toString());
+            let ret = JSON.parse((await chaincodeStub.getState(`bank:${bank.code}`)).toString());
             expect(ret).to.eql(bank);
         });
     });
@@ -139,7 +155,7 @@ describe('Remittance Tests', () => {
             let remittance = new Remittance();
             await remittance.RegisterBank(transactionContext, bank.code, bank.currencyCode);
 
-            let ret = JSON.parse(await chaincodeStub.getState(bank.code));
+            let ret = JSON.parse(await chaincodeStub.getState(`bank:${bank.code}`));
             expect(ret).to.eql(bank);
         });
     });
@@ -167,7 +183,7 @@ describe('Remittance Tests', () => {
 
             await remittance.CreateAccount(transactionContext, bank.code, bank2.code);
 
-            let ret = JSON.parse(await chaincodeStub.getState(bank.code));
+            let ret = JSON.parse(await chaincodeStub.getState(`bank:${bank.code}`));
             expect(ret.accounts.find(b => b.code = bank2.code).code).to.eql(bank2.code);
         });
     });
@@ -182,8 +198,33 @@ describe('Remittance Tests', () => {
             await remittance.CreateAccount(transactionContext, bank.code, bank2.code);
             await remittance.ApplyLiquidity(transactionContext, bank.code, bank2.code, 1000);
 
-            let ret = JSON.parse(await chaincodeStub.getState(bank.code));
+            let ret = JSON.parse(await chaincodeStub.getState(`bank:${bank.code}`));
             expect(ret.accounts.find(b => b.code = bank2.code).liquidity).to.eql(1000);
+        });
+    });
+
+    describe('Test ProposeTransaction', () => {
+        it('Test Transaction creation', async () => {
+            let remittance = new Remittance();
+
+            await remittance.RegisterBank(transactionContext, bank.code, bank.currencyCode);
+            await remittance.RegisterBank(transactionContext, bank2.code, bank2.currencyCode);
+            await remittance.RegisterBank(transactionContext, bank3.code, bank3.currencyCode);
+
+            await remittance.CreateAccount(transactionContext, bank.code, bank2.code);
+            await remittance.CreateAccount(transactionContext, bank2.code, bank3.code);
+
+            await remittance.ApplyLiquidity(transactionContext, bank.code, bank2.code, 1000);
+            await remittance.ApplyLiquidity(transactionContext, bank2.code, bank.code, 1000);
+
+            await remittance.ApplyLiquidity(transactionContext, bank2.code, bank3.code, 100);
+
+            // console.log(await remittance.ReadBank(transactionContext, bank.code));
+            // console.log(await remittance.ReadBank(transactionContext, bank2.code));
+            // console.log(await remittance.ReadBank(transactionContext, bank3.code));
+
+            const id = await remittance.ProposeTransaction(transactionContext, senderInfo, receiverInfo, 1000, participants);
+            // console.log(await remittance.ReadTransaction(transactionContext, id));
         });
     });
 
