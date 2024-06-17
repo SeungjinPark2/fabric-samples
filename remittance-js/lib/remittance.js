@@ -14,75 +14,97 @@ const { uuid } = require('uuidv4');
 const { BigNumber } = require('bignumber.js');
 
 class Remittance extends Contract {
-    async RegisterBank(ctx, code, currencyCode) {
-        const exists = await this.BankExists(ctx, code);
+    async Init(ctx, token, apiEndpoint, participantTypes) {
+        if (!this.isAdmin(ctx)) {
+            throw new Error(`This function is restricted to admin users`);
+        }
+
+        const metadata = {
+            fxRateApiToken: token,
+            apiEndpoint,
+            participantTypes,
+        };
+
+        const stateObj = stringify(sortKeysRecursive(metadata));
+
+        await ctx.stub.putState(`apiToken:${token}`, Buffer.from(token));
+        await ctx.stub.putState(`metadata`, Buffer.from(stateObj));
+
+        return stateObj;
+    }
+
+    // 어드민인지 확인하는 함수
+    isAdmin(ctx) {
+        const clientIdentity = ctx.clientIdentity;
+        const userId = clientIdentity.getAttributeValue('hf.EnrollmentID');
+        
+        // 어드민을 정의하는 조건 (admin으로 가정)
+        return userId === 'admin';
+    }
+
+    // currencyCode 는 은행이 취급하는 법정화폐를 의미한다. 아마 배열로 만드는 것이 맞겠지만 1개로 가정하고 프로젝트를 구성한다.
+    async RegisterBank(ctx, currencyCode) {
+        const clientIdentity = ctx.clientIdentity;
+        // 일반 유저는 SWIFTCODE 를 userId 로 가진다고 가정
+        const userId = clientIdentity.getAttributeValue('hf.EnrollmentID');
+        const exists = await this.BankExists(ctx, userId);
 
         if (exists) {
             throw new Error(`The bank ${code} already exists`);
         }
 
         const bank = {
-            code,
+            code: userId,
             currencyCode,
             available: true,
             accounts: [],
         };
 
-        await ctx.stub.putState(`bank:${code}`, Buffer.from(stringify(sortKeysRecursive(bank))));
-        return JSON.stringify(bank);
+        const stateObj = stringify(sortKeysRecursive(bank));
+
+        await ctx.stub.putState(`bank:${userId}`, Buffer.from(stateObj));
+        return stateObj;
     }
 
-    async CreateAccount(ctx, bank1Code, bank2Code) {
-        const bank1 = JSON.parse(await this.ReadBank(ctx, bank1Code));
-        const bank2 = JSON.parse(await this.ReadBank(ctx, bank2Code));
-
-        const exists = bank1.accounts.find(b => b.code == bank2Code);
+    async CreateAccount(ctx, bankCode) {
+        const self = JSON.parse(await this.ReadBank(ctx));
+        const bank = JSON.parse(await this.ReadBank(ctx, bankCode));
+        const exists = self.accounts.find(b => b.code == bankCode);
 
         if (exists) {
-            throw new Error(`The bank ${bank2Code} already exists on ${bank1Code}`);
+            throw new Error(`The bank ${bankCode} already exists on ${self}`);
         }
+        self.accounts.push({ code: bank.code, currencyCode: bank.currencyCode, liquidity: 0 });
 
-        bank1.accounts.push({ code: bank2.code, currencyCode: bank2.currencyCode, liquidity: 0 });
-        bank2.accounts.push({ code: bank1.code, currencyCode: bank1.currencyCode, liquidity: 0 });
+        const stateObj = stringify(sortKeysRecursive(self))
 
-        await ctx.stub.putState(`bank:${bank1.code}`, Buffer.from(stringify(sortKeysRecursive(bank1))));
-        await ctx.stub.putState(`bank:${bank2.code}`, Buffer.from(stringify(sortKeysRecursive(bank2))));
+        await ctx.stub.putState(`bank:${self.code}`, Buffer.from(stateObj));
+        return stateObj;
     }
 
     // apply liquidity, liquidity can either be positive, negative
-    async ApplyLiquidity(ctx, code, accountCode, liquidity) {
+    async ApplyLiquidity(ctx, accountCode, liquidity, code/*: undefined || string */) {
         const bank = JSON.parse(await this.ReadBank(ctx, code));
         const account = bank.accounts.find(a => a.code == accountCode);
 
         if (account == null) {
-            throw new Error(`The bank ${code} does not hold account ${accountCode}`);
+            throw new Error(`Cannot find account ${accountCode}`);
         }
 
-        const calculated = account.liquidity + liquidity;
-        if (calculated < 0) {
+        const liq = new BigNumber(account.liquidity);
+        const calculated = liq.plus(liquidity);
+
+        if (calculated.lte(0)) {
             throw new Error(`Liquidity can not be negative`);
         }
 
-        account.liquidity = calculated;
-        await ctx.stub.putState(`bank:${bank.code}`, Buffer.from(stringify(sortKeysRecursive(bank))));
-    }
+        account.liquidity = calculated.toString();
 
-    async ReadBank(ctx, code) {
-        const bankJSON = await ctx.stub.getState(`bank:${code}`); // get the bank from chaincode state
-        if (!bankJSON || bankJSON.length === 0) {
-            throw new Error(`The asset ${code} does not exist`);
-        }
-        return bankJSON.toString();
-    }
+        const stateObj = stringify(sortKeysRecursive(bank));
 
-    async ReadTransaction(ctx, id) {
-        const txJson = await ctx.stub.getState(`transaction:${id}`); // get the bank from chaincode state
-        if (!txJson || txJson.length === 0) {
-            throw new Error(`The asset ${id} does not exist`);
-        }
-        return txJson.toString();
+        await ctx.stub.putState(`bank:${bank.code}`, Buffer.from(stateObj));
+        return stateObj;
     }
-
     /*
         sender{receiver}Info: {
             name: string,
@@ -95,6 +117,7 @@ class Remittance extends Contract {
             approved: boolean,
             type: 'sender' | 'intermediary' | 'receiver',
             reason: string, // empty or reason with not approving
+            currencyCode: string,
         };
         transaction: {
             id: transaction_id,
@@ -104,37 +127,27 @@ class Remittance extends Contract {
             participants: participant[],
             status: 'pending' | 'failed' | 'done',
             createTime: timestamp,
-            fxRates: [], // todo
+            fxRates: [
+                'KRW:USD:0.000727',
+                ...
+            ]
         };
     */
     async ProposeTransaction(ctx, senderInfo, receiverInfo, value, participants) {
         let _value;
-        const _participants = [];
+        let _participants = [];
+        let fxRates = [];
         const id = uuid();
+        const metadata = JSON.parse(await ctx.stub.getState('metadata'));
 
+        // input 값 검증
         if (!Array.isArray(participants)) {
             throw new Error(`Argument participants should be array`);
         }
-        if (participants.filter(p => p.type === 'sender').length !== 1
-            || participants.filter(p => p.type === 'receiver').length !== 1
-            || participants[0].type !== 'sender'
-            || participants.pop().type !== 'receiver'
-        ) {
-            throw new Error(`Argument participants can have only one sender and receiver also first participant is sender and last one is receiver`);
-        } else {
-            for (const p of participants) {
-                if (['sender', 'intermediary', 'receiver'].find(t => t === p.type) == null) {
-                    throw new Error(`Participants should has type in sender, intermediary, receiver`);
-                }
-                const b = JSON.parse(await this.ReadBank(ctx, p.code));
-                _participants.push({
-                    code: b.code,
-                    approved: p.type === 'sender', // only sender is approved
-                    type: p.type,
-                    reason: '', // empty or reason with not approving
-                });
-            }
+        if (participants.length === 0) {
+            throw new Error(`Length of participants is at least 1`);
         }
+
         if (isNaN(value)) {
             throw new Error(`Value should be number`);
         } else {
@@ -143,6 +156,89 @@ class Remittance extends Contract {
                 throw new Error(`Value can not be negative`);
             }
         }
+
+        _participants = [
+            {
+                code: await ctx.clientIdentity.getAttributeValue('hf.EnrollmentID'),
+                type: 'sender',
+            },
+            ...participants.map(p => ({ code: p.code, type: p.type })),
+        ];
+
+        // 참여자를 ReadBank 하여 가져옴
+        const fetchedParticipants = await Promise.all(_participants.map(p => 
+            this.ReadBank(ctx, p.code).then(bank => ({
+                ...JSON.parse(bank),
+                type: p.type,
+            })),
+        ));
+
+        for (let i = 0; i < fetchedParticipants.length - 1; i++) {
+            const current = fetchedParticipants[i];
+            const next = fetchedParticipants[i + 1];
+            const exists = current.accounts.find(a => a.code === next.code);
+
+            if (exists == null) {
+                throw new Error(`The bank ${next.code} does not exists on ${current.code}`);
+            }
+        }
+
+        const currencies = [...new Set(fetchedParticipants.map(p => p.currencyCode))];
+
+        // 환율을 구한다.
+        if (currencies.length > 1) {
+            const fetches = [];
+            const getFxRate = async (base, currency) => fetch(`${metadata.apiEndpoint}/latest?base=${base}&currencies=${currency}&resolution=1m&amount=1&places=6&format=json&api_key=${metadata.apiToken}`)
+                .then(res => res.json())
+                .catch(err => { throw new Error(`Fetch failed, reason: ${err.message}`)});
+
+            for (let i = 0; i < currencies.length - 1; i++) {
+                fetches.push(getFxRate(currencies[i], currencies[i + 1]));
+            }
+
+            fxRates = (await Promise.all(fetches)).map(rate => ({
+                base: rate.base,
+                target: rate.rates,
+            }));
+        }
+
+        const receipts = [];
+        let __value = _value;
+        // 영수증 발행. 추후 approve 가 완료되면 적용되는 구조이다.
+        for (let i = 0; i < fetchedParticipants.length; i++) {
+            const current = fetchedParticipants[i];
+            const next = i < fetchedParticipants.length - 1 ? fetchedParticipants[i + 1] : null;
+            const before = i > 0 ? fetchedParticipants[i - 1] : null;
+            let rate = 1;
+
+            if (before !== null) {
+                if (current.currencyCode !== before.currencyCode) {
+                    const fRate = fxRates.find(f => f.base === before.currencyCode);
+                    if (rate == null) {
+                        throw new Error(`Can not find fxRate, base:${before.currencyCode} target: ${current.currencyCode}`);
+                    };
+                    rate = fRate.target[current.currencyCode];
+                }
+            }
+
+            const list = [];
+            before && list.push({ target: before.code, value: __value.multipliedBy(rate).negated().toString() });
+            next   && list.push({ target: next.code, value: __value.multipliedBy(rate).toString() });
+            receipts.push({
+                code: current.code,
+                list,
+            });
+
+            __value = __value.multipliedBy(rate);
+        }
+
+        _participants = fetchedParticipants.map((fp, i) => ({
+            code: fp.code,
+            approved: i === 0,
+            type: i === 0 ? 'sender' : fp.type,
+            reason: '', // empty or reason with not approving
+            currencyCode: fp.currencyCode,
+        }));
 
         const transaction = {
             id,
@@ -160,83 +256,101 @@ class Remittance extends Contract {
             },
             value: _value.toString(),
             participants: _participants,
+            fxRates,
+            status: 'pending',
             createTime: Date.now(),
         };
 
-        await ctx.stub.putState(`transaction:${id}`, Buffer.from(stringify(sortKeysRecursive(transaction))));
-        return id;
+        const stateObj = stringify(sortKeysRecursive(transaction));
+        await ctx.stub.putState(`transaction:${id}`, stateObj);
+        await ctx.stub.putState(`receipt:${id}`, stringify(sortKeysRecursive(receipts)));
+        ctx.stub.setEvent('ProposeTransactionEvent', stateObj);
+
+        return stateObj;
     }
 
-    // UpdateAsset updates an existing asset in the world state with provided parameters.
-    // async UpdateAsset(ctx, id, color, size, owner, appraisedValue) {
-    //     const exists = await this.AssetExists(ctx, id);
-    //     if (!exists) {
-    //         throw new Error(`The asset ${id} does not exist`);
-    //     }
+    async ApproveTransaction(ctx, id, choice /*: approve | reject */, reason /*: undefined | string*/) {
+        const bank = JSON.parse(await this.ReadBank(ctx));
+        const tx = JSON.parse(await this.ReadTransaction(ctx, id));
+        const participant = tx.participants.find(p => p.code === bank.code);
+        let flag = true;
 
-    //     // overwriting original asset with new asset
-    //     const updatedAsset = {
-    //         ID: id,
-    //         Color: color,
-    //         Size: size,
-    //         Owner: owner,
-    //         AppraisedValue: appraisedValue,
-    //     };
-    //     // we insert data in alphabetic order using 'json-stringify-deterministic' and 'sort-keys-recursive'
-    //     return ctx.stub.putState(id, Buffer.from(stringify(sortKeysRecursive(updatedAsset))));
-    // }
+        if (tx.status !== 'pending') {
+            throw new Error(`Transaction ${id} is already done or failed`);
+        }
+        if (participant == null) {
+            throw new Error(`Bank ${bank.code} is not a participant of transaction ${id}`);
+        }
 
-    // DeleteAsset deletes an given asset from the world state.
-    // async DeleteAsset(ctx, id) {
-    //     const exists = await this.AssetExists(ctx, id);
-    //     if (!exists) {
-    //         throw new Error(`The asset ${id} does not exist`);
-    //     }
-    //     return ctx.stub.deleteState(id);
-    // }
+        participant.approved = choice === 'approve';
+        if (choice === 'reject') {
+            tx.status = 'failed';
+            participant.reason = reason;
+        }
 
-    // AssetExists returns true when asset with given ID exists in world state.
-    // async AssetExists(ctx, id) {
-    //     const assetJSON = await ctx.stub.getState(id);
-    //     return assetJSON && assetJSON.length > 0;
-    // }
+        tx.participants.forEach(p => {
+            flag = flag && p.approved;
+        });
+
+        if (flag) {
+            await this.ApplyReceipt(ctx, id);
+            tx.status = 'done';
+        }
+
+        const stateObj = stringify(sortKeysRecursive(tx));
+        await ctx.stub.putState(`transaction:${id}`, stateObj);
+        ctx.stub.setEvent('ApproveTransactionEvent', stateObj);
+
+        return stateObj;
+    }
+
+    async ApplyReceipt(ctx, id) {
+        const receipt = JSON.parse(await this.ReadReceipt(ctx, id));
+        for (const r of receipt) {
+            for (const l of r.list) {
+                await this.ApplyLiquidity(ctx, l.target, l.value, r.code);
+            }
+        }
+
+        ctx.stub.setEvent('ApplyReceiptEvent', stringify(sortKeysRecursive(receipt)));
+    }
+    
+    async ReadBank(ctx, code) {
+        let bankJSON;
+        if (code) {
+            bankJSON = await ctx.stub.getState(`bank:${code}`); // get the bank from chaincode state
+        } else {
+            const clientIdentity = ctx.clientIdentity;
+            const userId = clientIdentity.getAttributeValue('hf.EnrollmentID');
+            bankJSON = await ctx.stub.getState(`bank:${userId}`); // get the bank from chaincode state
+        }
+
+        if (!bankJSON || bankJSON.length === 0) {
+            throw new Error(`The asset ${code} does not exist`);
+        }
+        return bankJSON;
+    }
+
+    async ReadTransaction(ctx, id) {
+        const txJson = await ctx.stub.getState(`transaction:${id}`); // get the bank from chaincode state
+        if (!txJson || txJson.length === 0) {
+            throw new Error(`The asset ${id} does not exist`);
+        }
+        return txJson;
+    }
+
+    async ReadReceipt(ctx, id) {
+        const receiptJson = await ctx.stub.getState(`receipt:${id}`);
+        if (!receiptJson || receiptJson.length === 0) {
+            throw new Error(`The asset ${id} does not exist`);
+        }
+        return receiptJson;
+    }
 
     async BankExists(ctx, code) {
         const bankJSON = await ctx.stub.getState(`bank:${code}`);
         return bankJSON && bankJSON.length > 0;
     }
-
-    // TransferAsset updates the owner field of asset with given id in the world state.
-    // async TransferAsset(ctx, id, newOwner) {
-    //     const assetString = await this.ReadAsset(ctx, id);
-    //     const asset = JSON.parse(assetString);
-    //     const oldOwner = asset.Owner;
-    //     asset.Owner = newOwner;
-    //     // we insert data in alphabetic order using 'json-stringify-deterministic' and 'sort-keys-recursive'
-    //     await ctx.stub.putState(id, Buffer.from(stringify(sortKeysRecursive(asset))));
-    //     return oldOwner;
-    // }
-
-    // GetAllAssets returns all assets found in the world state.
-    // async GetAllAssets(ctx) {
-    //     const allResults = [];
-    //     // range query with empty string for startKey and endKey does an open-ended query of all assets in the chaincode namespace.
-    //     const iterator = await ctx.stub.getStateByRange('', '');
-    //     let result = await iterator.next();
-    //     while (!result.done) {
-    //         const strValue = Buffer.from(result.value.value.toString()).toString('utf8');
-    //         let record;
-    //         try {
-    //             record = JSON.parse(strValue);
-    //         } catch (err) {
-    //             console.log(err);
-    //             record = strValue;
-    //         }
-    //         allResults.push(record);
-    //         result = await iterator.next();
-    //     }
-    //     return JSON.stringify(allResults);
-    // }
 }
 
 module.exports = Remittance;

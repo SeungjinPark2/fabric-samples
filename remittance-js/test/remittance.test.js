@@ -11,7 +11,7 @@ const sinonChai = require('sinon-chai');
 const expect = chai.expect;
 
 const { Context } = require('fabric-contract-api');
-const { ChaincodeStub } = require('fabric-shim');
+const { ChaincodeStub, ClientIdentity, newLogger } = require('fabric-shim');
 
 const Remittance = require('../lib/remittance.js');
 
@@ -19,12 +19,27 @@ let assert = sinon.assert;
 chai.use(sinonChai);
 
 describe('Remittance Tests', () => {
-    let transactionContext, chaincodeStub, bank, bank2, bank3, senderInfo, receiverInfo, participants;
-    beforeEach(() => {
+    let transactionContext;
+    let chaincodeStub;
+    let sandbox;
+    let clientIdentity;
+    let remittance;
+    let bank;
+    let bank2;
+    let bank3;
+    let senderInfo;
+    let receiverInfo;
+    let participants;
+
+    beforeEach(async () => {
         transactionContext = new Context();
 
+        sandbox = sinon.createSandbox();
         chaincodeStub = sinon.createStubInstance(ChaincodeStub);
+        clientIdentity =  sandbox.createStubInstance(ClientIdentity);
         transactionContext.setChaincodeStub(chaincodeStub);
+        transactionContext.setClientIdentity(clientIdentity);
+        remittance = new Remittance();
 
         chaincodeStub.putState.callsFake((key, value) => {
             if (!chaincodeStub.states) {
@@ -73,7 +88,7 @@ describe('Remittance Tests', () => {
 
         bank2 = {
             code: 'SHBKKRSEXXX',
-            currencyCode: 'KRW',
+            currencyCode: 'JPY',
             accounts: [],
             available: true,
         };
@@ -101,10 +116,6 @@ describe('Remittance Tests', () => {
 
         participants = [
             {
-                code: bank.code,
-                type: 'sender',
-            },
-            {
                 code: bank2.code,
                 type: 'intermediary',
             },
@@ -113,13 +124,21 @@ describe('Remittance Tests', () => {
                 type: 'receiver',
             }
         ];
+
+        const metadata = {
+            apiToken: 'fxr_live_b1e7580ba98491842a59797583c3d681e5af',
+            apiEndpoint: 'https://api.fxratesapi.com/',
+            participantTypes: ['sender', 'intermediary', 'receiver'],
+        };
+
+        clientIdentity.getAttributeValue.withArgs('hf.EnrollmentID').returns('admin');
+        await remittance.Init(transactionContext, metadata.apiEndpoint, metadata.apiEndpoint, metadata.participantTypes);
     });
 
     describe('Test RegisterBank', () => {
         it('should return error on RegisterBank', async () => {
             chaincodeStub.putState.rejects('failed inserting key');
 
-            let remittance = new Remittance();
             try {
                 await remittance.RegisterBank(transactionContext, bank.code, bank.currencyCode);
                 assert.fail('RegisterBank should have failed');
@@ -129,9 +148,8 @@ describe('Remittance Tests', () => {
         });
 
         it('should return success on RegisterBank', async () => {
-            let remittance = new Remittance();
-
-            await remittance.RegisterBank(transactionContext, bank.code, bank.currencyCode);
+            clientIdentity.getAttributeValue.withArgs('hf.EnrollmentID').returns(bank.code);
+            await remittance.RegisterBank(transactionContext, bank.currencyCode);
 
             let ret = JSON.parse((await chaincodeStub.getState(`bank:${bank.code}`)).toString());
             expect(ret).to.eql(bank);
@@ -140,9 +158,6 @@ describe('Remittance Tests', () => {
 
     describe('Test ReadBank', () => {
         it('should return error on ReadBank', async () => {
-            let remittance = new Remittance();
-            await remittance.RegisterBank(transactionContext, bank.code, bank.currencyCode);
-
             try {
                 await remittance.ReadBank(transactionContext, 'bank2');
                 assert.fail('ReadBank should have failed');
@@ -152,23 +167,34 @@ describe('Remittance Tests', () => {
         });
 
         it('should return success on ReadBank', async () => {
-            let remittance = new Remittance();
-            await remittance.RegisterBank(transactionContext, bank.code, bank.currencyCode);
+            clientIdentity.getAttributeValue.withArgs('hf.EnrollmentID').returns(bank.code);
+            await remittance.RegisterBank(transactionContext, bank.currencyCode);
 
-            let ret = JSON.parse(await chaincodeStub.getState(`bank:${bank.code}`));
+            let ret = JSON.parse(await remittance.ReadBank(transactionContext, bank.code));
             expect(ret).to.eql(bank);
+        });
+    });
+
+    describe('Test ReadBank', () => {
+        it('should return error on ReadBank', async () => {
+            try {
+                await remittance.ReadBank(transactionContext, 'bank2');
+                assert.fail('ReadBank should have failed');
+            } catch (err) {
+                expect(err.message).to.equal('The asset bank2 does not exist');
+            }
         });
     });
 
     describe('Test CreateAccount', () => {
         it('should return error on CreateAccount', async () => {
-            let remittance = new Remittance();
-
-            await remittance.RegisterBank(transactionContext, bank.code, bank.currencyCode);
-            await remittance.RegisterBank(transactionContext, bank2.code, bank2.currencyCode);
+            clientIdentity.getAttributeValue.withArgs('hf.EnrollmentID').returns(bank2.code);
+            await remittance.RegisterBank(transactionContext, bank2.currencyCode);
+            clientIdentity.getAttributeValue.withArgs('hf.EnrollmentID').returns(bank.code);
+            await remittance.RegisterBank(transactionContext, bank.currencyCode);
             
             try {
-                await remittance.CreateAccount(transactionContext, bank.code, bank2.code);
+                await remittance.CreateAccount(transactionContext, bank2.code);
                 assert.fail(`The bank ${bank2.code} already exists on ${bank.code}`);
             } catch (err) {
                 expect(err.message).to.equal(`The bank ${bank2.code} already exists on ${bank.code}`);
@@ -176,12 +202,12 @@ describe('Remittance Tests', () => {
         });
 
         it('should return success on CreateAccount', async () => {
-            let remittance = new Remittance();
+            clientIdentity.getAttributeValue.withArgs('hf.EnrollmentID').returns(bank2.code);
+            await remittance.RegisterBank(transactionContext, bank2.currencyCode);
+            clientIdentity.getAttributeValue.withArgs('hf.EnrollmentID').returns(bank.code);
+            await remittance.RegisterBank(transactionContext, bank.currencyCode);
 
-            await remittance.RegisterBank(transactionContext, bank.code, bank.currencyCode);
-            await remittance.RegisterBank(transactionContext, bank2.code, bank2.currencyCode);
-
-            await remittance.CreateAccount(transactionContext, bank.code, bank2.code);
+            await remittance.CreateAccount(transactionContext, bank2.code);
 
             let ret = JSON.parse(await chaincodeStub.getState(`bank:${bank.code}`));
             expect(ret.accounts.find(b => b.code = bank2.code).code).to.eql(bank2.code);
@@ -190,170 +216,133 @@ describe('Remittance Tests', () => {
 
     describe('Test ApplyLiquidity', () => {
         it('should return success on ApplyLiquidity', async () => {
-            let remittance = new Remittance();
+            clientIdentity.getAttributeValue.withArgs('hf.EnrollmentID').returns(bank2.code);
+            await remittance.RegisterBank(transactionContext, bank2.currencyCode);
+            clientIdentity.getAttributeValue.withArgs('hf.EnrollmentID').returns(bank.code);
+            await remittance.RegisterBank(transactionContext, bank.currencyCode);
 
-            await remittance.RegisterBank(transactionContext, bank.code, bank.currencyCode);
-            await remittance.RegisterBank(transactionContext, bank2.code, bank2.currencyCode);
 
-            await remittance.CreateAccount(transactionContext, bank.code, bank2.code);
-            await remittance.ApplyLiquidity(transactionContext, bank.code, bank2.code, 1000);
+            await remittance.CreateAccount(transactionContext, bank2.code);
+            await remittance.ApplyLiquidity(transactionContext, bank2.code, 1000);
 
             let ret = JSON.parse(await chaincodeStub.getState(`bank:${bank.code}`));
-            expect(ret.accounts.find(b => b.code = bank2.code).liquidity).to.eql(1000);
+            expect(ret.accounts.find(b => b.code = bank2.code).liquidity).to.eql('1000');
         });
     });
 
-    describe('Test ProposeTransaction', () => {
+    describe('Test Transaction', () => {
+        async function registrationSetup() {
+            clientIdentity.getAttributeValue.withArgs('hf.EnrollmentID').returns(bank.code);
+            await remittance.RegisterBank(transactionContext, bank.currencyCode);
+            clientIdentity.getAttributeValue.withArgs('hf.EnrollmentID').returns(bank2.code);
+            await remittance.RegisterBank(transactionContext, bank2.currencyCode);
+            clientIdentity.getAttributeValue.withArgs('hf.EnrollmentID').returns(bank3.code);
+            await remittance.RegisterBank(transactionContext, bank3.currencyCode);
+        }
+
+        async function liquiditySetup() {
+            clientIdentity.getAttributeValue.withArgs('hf.EnrollmentID').returns(bank.code);
+            await remittance.CreateAccount(transactionContext, bank2.code);
+            await remittance.ApplyLiquidity(transactionContext, bank2.code, 100000);
+
+            clientIdentity.getAttributeValue.withArgs('hf.EnrollmentID').returns(bank2.code);
+            await remittance.CreateAccount(transactionContext, bank.code);
+            await remittance.ApplyLiquidity(transactionContext, bank.code, 100000);
+
+            await remittance.CreateAccount(transactionContext, bank3.code);
+            await remittance.ApplyLiquidity(transactionContext, bank3.code, 100000);
+
+            clientIdentity.getAttributeValue.withArgs('hf.EnrollmentID').returns(bank3.code);
+            await remittance.CreateAccount(transactionContext, bank2.code);
+            await remittance.ApplyLiquidity(transactionContext, bank2.code, 1000);
+
+        }
+
         it('Test Transaction creation', async () => {
-            let remittance = new Remittance();
+            await registrationSetup();
+            await liquiditySetup();
 
-            await remittance.RegisterBank(transactionContext, bank.code, bank.currencyCode);
-            await remittance.RegisterBank(transactionContext, bank2.code, bank2.currencyCode);
-            await remittance.RegisterBank(transactionContext, bank3.code, bank3.currencyCode);
+            clientIdentity.getAttributeValue.withArgs('hf.EnrollmentID').returns(bank.code);
+            const ret = await remittance.ProposeTransaction(transactionContext, senderInfo, receiverInfo, 1000, participants);
+            console.dir(JSON.parse(ret), { depth: null });
 
-            await remittance.CreateAccount(transactionContext, bank.code, bank2.code);
-            await remittance.CreateAccount(transactionContext, bank2.code, bank3.code);
+            const receipts = await remittance.ReadReceipt(transactionContext, JSON.parse(ret).id);
+            console.log(receipts);
+        });
 
-            await remittance.ApplyLiquidity(transactionContext, bank.code, bank2.code, 1000);
-            await remittance.ApplyLiquidity(transactionContext, bank2.code, bank.code, 1000);
+        it('Test Transaction creation fail', async () => {
+            await registrationSetup();
 
-            await remittance.ApplyLiquidity(transactionContext, bank2.code, bank3.code, 100);
+            clientIdentity.getAttributeValue.withArgs('hf.EnrollmentID').returns(bank.code);
+            await remittance.CreateAccount(transactionContext, bank2.code);
+            await remittance.ApplyLiquidity(transactionContext, bank2.code, 100000);
 
-            // console.log(await remittance.ReadBank(transactionContext, bank.code));
-            // console.log(await remittance.ReadBank(transactionContext, bank2.code));
-            // console.log(await remittance.ReadBank(transactionContext, bank3.code));
+            // bank2 는 bank1 을 hold 하지만 bank3 을 hold 하지 않는다고 가정
+            clientIdentity.getAttributeValue.withArgs('hf.EnrollmentID').returns(bank2.code);
+            await remittance.CreateAccount(transactionContext, bank.code);
+            await remittance.ApplyLiquidity(transactionContext, bank.code, 100000);
 
-            const id = await remittance.ProposeTransaction(transactionContext, senderInfo, receiverInfo, 1000, participants);
-            // console.log(await remittance.ReadTransaction(transactionContext, id));
+            clientIdentity.getAttributeValue.withArgs('hf.EnrollmentID').returns(bank3.code);
+            await remittance.CreateAccount(transactionContext, bank2.code);
+            await remittance.ApplyLiquidity(transactionContext, bank2.code, 1000);
+
+            clientIdentity.getAttributeValue.withArgs('hf.EnrollmentID').returns(bank.code);
+            
+            try {
+                await remittance.ProposeTransaction(transactionContext, senderInfo, receiverInfo, 1000, participants);
+                assert.fail(`The bank ${bank3.code} does not exists on ${bank2.code}`);
+            } catch (err) {
+                expect(err.message).to.equal(`The bank ${bank3.code} does not exists on ${bank2.code}`);
+            }
+        });
+
+        it('Test ApproveTransaction', async () => {
+            await registrationSetup();
+            await liquiditySetup();
+
+            clientIdentity.getAttributeValue.withArgs('hf.EnrollmentID').returns(bank.code);
+            const ret = JSON.parse(await remittance.ProposeTransaction(transactionContext, senderInfo, receiverInfo, 1000, participants));
+
+            clientIdentity.getAttributeValue.withArgs('hf.EnrollmentID').returns(bank2.code);
+            const approvedTxFromBank2 = JSON.parse(await remittance.ApproveTransaction(transactionContext, ret.id, 'approve'));
+            const foundBank2 = approvedTxFromBank2.participants.find(p => p.code === bank2.code);
+            expect(foundBank2.approved).to.equal(true);
+
+            clientIdentity.getAttributeValue.withArgs('hf.EnrollmentID').returns(bank3.code);
+            const approvedTxFromBank3 = JSON.parse(await remittance.ApproveTransaction(transactionContext, ret.id, 'approve'));
+            const foundBank3 = approvedTxFromBank3.participants.find(p => p.code === bank3.code);
+            expect(foundBank3.approved).to.equal(true);
+            expect(approvedTxFromBank3.status).to.equal('done');
+
+            const fBank1 = JSON.parse(await remittance.ReadBank(transactionContext, bank.code));
+            const fBank2 = JSON.parse(await remittance.ReadBank(transactionContext, bank2.code));
+            const fBank3 = JSON.parse(await remittance.ReadBank(transactionContext, bank3.code));
+
+            console.log(fBank1.accounts);
+            console.log(fBank2.accounts);
+            console.log(fBank3.accounts);
         });
     });
 
-    //describe('Test UpdateAsset', () => {
-    //    it('should return error on UpdateAsset', async () => {
-    //        let remittance = new Remittance();
-    //        await remittance.CreateAsset(transactionContext, bank.ID, bank.Color, bank.Size, bank.Owner, bank.AppraisedValue);
+    describe('Init', () => {
+        it('should execute for admin users', async () => {
+            clientIdentity.getMSPID.returns('Org1MSP');
+            clientIdentity.getAttributeValue.withArgs('hf.EnrollmentID').returns('admin');
 
-    //        try {
-    //            await remittance.UpdateAsset(transactionContext, 'bank2', 'orange', 10, 'Me', 500);
-    //            assert.fail('UpdateAsset should have failed');
-    //        } catch (err) {
-    //            expect(err.message).to.equal('The bank bank2 does not exist');
-    //        }
-    //    });
+            const response = JSON.parse(await remittance.Init(transactionContext, 'testtoken'));
+            expect(response.fxRateApiToken).to.equal('testtoken');
+        });
 
-    //    it('should return success on UpdateAsset', async () => {
-    //        let remittance = new Remittance();
-    //        await remittance.CreateAsset(transactionContext, bank.ID, bank.Color, bank.Size, bank.Owner, bank.AppraisedValue);
+        it('should throw an error for non-admin users', async () => {
+            clientIdentity.getMSPID.returns('Org1MSP');
+            clientIdentity.getAttributeValue.withArgs('hf.EnrollmentID').returns('user');
 
-    //        await remittance.UpdateAsset(transactionContext, 'bank1', 'orange', 10, 'Me', 500);
-    //        let ret = JSON.parse(await chaincodeStub.getState(bank.ID));
-    //        let expected = {
-    //            ID: 'bank1',
-    //            Color: 'orange',
-    //            Size: 10,
-    //            Owner: 'Me',
-    //            AppraisedValue: 500
-    //        };
-    //        expect(ret).to.eql(expected);
-    //    });
-    //});
-
-    //describe('Test DeleteAsset', () => {
-    //    it('should return error on DeleteAsset', async () => {
-    //        let remittance = new Remittance();
-    //        await remittance.CreateAsset(transactionContext, bank.ID, bank.Color, bank.Size, bank.Owner, bank.AppraisedValue);
-
-    //        try {
-    //            await remittance.DeleteAsset(transactionContext, 'bank2');
-    //            assert.fail('DeleteAsset should have failed');
-    //        } catch (err) {
-    //            expect(err.message).to.equal('The bank bank2 does not exist');
-    //        }
-    //    });
-
-    //    it('should return success on DeleteAsset', async () => {
-    //        let remittance = new Remittance();
-    //        await remittance.CreateAsset(transactionContext, bank.ID, bank.Color, bank.Size, bank.Owner, bank.AppraisedValue);
-
-    //        await remittance.DeleteAsset(transactionContext, bank.ID);
-    //        let ret = await chaincodeStub.getState(bank.ID);
-    //        expect(ret).to.equal(undefined);
-    //    });
-    //});
-
-    //describe('Test TransferAsset', () => {
-    //    it('should return error on TransferAsset', async () => {
-    //        let remittance = new Remittance();
-    //        await remittance.CreateAsset(transactionContext, bank.ID, bank.Color, bank.Size, bank.Owner, bank.AppraisedValue);
-
-    //        try {
-    //            await remittance.TransferAsset(transactionContext, 'bank2', 'Me');
-    //            assert.fail('DeleteAsset should have failed');
-    //        } catch (err) {
-    //            expect(err.message).to.equal('The bank bank2 does not exist');
-    //        }
-    //    });
-
-    //    it('should return success on TransferAsset', async () => {
-    //        let remittance = new Remittance();
-    //        await remittance.CreateAsset(transactionContext, bank.ID, bank.Color, bank.Size, bank.Owner, bank.AppraisedValue);
-
-    //        await remittance.TransferAsset(transactionContext, bank.ID, 'Me');
-    //        let ret = JSON.parse((await chaincodeStub.getState(bank.ID)).toString());
-    //        expect(ret).to.eql(Object.assign({}, bank, {Owner: 'Me'}));
-    //    });
-    //});
-
-//    describe('Test GetAllAssets', () => {
-//        it('should return success on GetAllAssets', async () => {
-//            let remittance = new Remittance();
-//
-//            await remittance.CreateAsset(transactionContext, 'bank1', 'blue', 5, 'Robert', 100);
-//            await remittance.CreateAsset(transactionContext, 'bank2', 'orange', 10, 'Paul', 200);
-//            await remittance.CreateAsset(transactionContext, 'bank3', 'red', 15, 'Troy', 300);
-//            await remittance.CreateAsset(transactionContext, 'bank4', 'pink', 20, 'Van', 400);
-//
-//            let ret = await remittance.GetAllAssets(transactionContext);
-//            ret = JSON.parse(ret);
-//            expect(ret.length).to.equal(4);
-//
-//            let expected = [
-//                {Record: {ID: 'bank1', Color: 'blue', Size: 5, Owner: 'Robert', AppraisedValue: 100}},
-//                {Record: {ID: 'bank2', Color: 'orange', Size: 10, Owner: 'Paul', AppraisedValue: 200}},
-//                {Record: {ID: 'bank3', Color: 'red', Size: 15, Owner: 'Troy', AppraisedValue: 300}},
-//                {Record: {ID: 'bank4', Color: 'pink', Size: 20, Owner: 'Van', AppraisedValue: 400}}
-//            ];
-//
-//            expect(ret).to.eql(expected);
-//        });
-//
-//        it('should return success on GetAllAssets for non JSON value', async () => {
-//            let remittance = new Remittance();
-//
-//            chaincodeStub.putState.onFirstCall().callsFake((key, value) => {
-//                if (!chaincodeStub.states) {
-//                    chaincodeStub.states = {};
-//                }
-//                chaincodeStub.states[key] = 'non-json-value';
-//            });
-//
-//            await remittance.CreateAsset(transactionContext, 'bank1', 'blue', 5, 'Robert', 100);
-//            await remittance.CreateAsset(transactionContext, 'bank2', 'orange', 10, 'Paul', 200);
-//            await remittance.CreateAsset(transactionContext, 'bank3', 'red', 15, 'Troy', 300);
-//            await remittance.CreateAsset(transactionContext, 'bank4', 'pink', 20, 'Van', 400);
-//
-//            let ret = await remittance.GetAllAssets(transactionContext);
-//            ret = JSON.parse(ret);
-//            expect(ret.length).to.equal(4);
-//
-//            let expected = [
-//                {Record: 'non-json-value'},
-//                {Record: {ID: 'bank2', Color: 'orange', Size: 10, Owner: 'Paul', AppraisedValue: 200}},
-//                {Record: {ID: 'bank3', Color: 'red', Size: 15, Owner: 'Troy', AppraisedValue: 300}},
-//                {Record: {ID: 'bank4', Color: 'pink', Size: 20, Owner: 'Van', AppraisedValue: 400}}
-//            ];
-//
-//            expect(ret).to.eql(expected);
-//        });
-//    });
+            try {
+                await remittance.Init(transactionContext, 'testtoken');
+                expect.fail('Init should throw an error for non-admin users');
+            } catch (err) {
+                expect(err.message).to.equal('This function is restricted to admin users');
+            }
+        });
+    });
 });
