@@ -329,7 +329,7 @@ class Remittance extends Contract {
         if (!bankJSON || bankJSON.length === 0) {
             throw new Error(`The asset ${code} does not exist`);
         }
-        return bankJSON;
+        return bankJSON.toString();
     }
 
     async ReadTransaction(ctx, id) {
@@ -337,7 +337,7 @@ class Remittance extends Contract {
         if (!txJson || txJson.length === 0) {
             throw new Error(`The asset ${id} does not exist`);
         }
-        return txJson;
+        return txJson.toString();
     }
 
     async ReadReceipt(ctx, id) {
@@ -345,7 +345,7 @@ class Remittance extends Contract {
         if (!receiptJson || receiptJson.length === 0) {
             throw new Error(`The asset ${id} does not exist`);
         }
-        return receiptJson;
+        return receiptJson.toString();
     }
 
     async BankExists(ctx, code) {
