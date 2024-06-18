@@ -14,15 +14,16 @@ const { uuid } = require('uuidv4');
 const { BigNumber } = require('bignumber.js');
 
 class Remittance extends Contract {
-    async Init(ctx, token, apiEndpoint, participantTypes) {
+    async Init(ctx, token, apiEndpoint) {
         if (!this.isAdmin(ctx)) {
-            throw new Error(`This function is restricted to admin users`);
+            const clientIdentity = ctx.clientIdentity;
+            const userId = clientIdentity.getAttributeValue('hf.EnrollmentID');
+            throw new Error(`This function is restricted to admin users: your clientID is ${userId}`);
         }
 
         const metadata = {
             fxRateApiToken: token,
             apiEndpoint,
-            participantTypes,
         };
 
         const stateObj = stringify(sortKeysRecursive(metadata));
@@ -37,9 +38,9 @@ class Remittance extends Contract {
     isAdmin(ctx) {
         const clientIdentity = ctx.clientIdentity;
         const userId = clientIdentity.getAttributeValue('hf.EnrollmentID');
-        
-        // 어드민을 정의하는 조건 (admin으로 가정)
-        return userId === 'admin';
+
+        const regex = /admin$/;
+        return regex.test(userId);
     }
 
     // currencyCode 는 은행이 취급하는 법정화폐를 의미한다. 아마 배열로 만드는 것이 맞겠지만 1개로 가정하고 프로젝트를 구성한다.
@@ -166,7 +167,7 @@ class Remittance extends Contract {
         ];
 
         // 참여자를 ReadBank 하여 가져옴
-        const fetchedParticipants = await Promise.all(_participants.map(p => 
+        const fetchedParticipants = await Promise.all(_participants.map(p =>
             this.ReadBank(ctx, p.code).then(bank => ({
                 ...JSON.parse(bank),
                 type: p.type,
@@ -314,7 +315,7 @@ class Remittance extends Contract {
 
         ctx.stub.setEvent('ApplyReceiptEvent', stringify(sortKeysRecursive(receipt)));
     }
-    
+
     async ReadBank(ctx, code) {
         let bankJSON;
         if (code) {

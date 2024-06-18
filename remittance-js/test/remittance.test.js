@@ -128,7 +128,6 @@ describe('Remittance Tests', () => {
         const metadata = {
             apiToken: 'fxr_live_b1e7580ba98491842a59797583c3d681e5af',
             apiEndpoint: 'https://api.fxratesapi.com/',
-            participantTypes: ['sender', 'intermediary', 'receiver'],
         };
 
         clientIdentity.getAttributeValue.withArgs('hf.EnrollmentID').returns('admin');
@@ -192,7 +191,7 @@ describe('Remittance Tests', () => {
             await remittance.RegisterBank(transactionContext, bank2.currencyCode);
             clientIdentity.getAttributeValue.withArgs('hf.EnrollmentID').returns(bank.code);
             await remittance.RegisterBank(transactionContext, bank.currencyCode);
-            
+
             try {
                 await remittance.CreateAccount(transactionContext, bank2.code);
                 assert.fail(`The bank ${bank2.code} already exists on ${bank.code}`);
@@ -287,7 +286,7 @@ describe('Remittance Tests', () => {
             await remittance.ApplyLiquidity(transactionContext, bank2.code, 1000);
 
             clientIdentity.getAttributeValue.withArgs('hf.EnrollmentID').returns(bank.code);
-            
+
             try {
                 await remittance.ProposeTransaction(transactionContext, senderInfo, receiverInfo, 1000, participants);
                 assert.fail(`The bank ${bank3.code} does not exists on ${bank2.code}`);
