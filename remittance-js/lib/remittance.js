@@ -15,11 +15,12 @@ const { BigNumber } = require('bignumber.js');
 
 class Remittance extends Contract {
     async Init(ctx, token, apiEndpoint) {
-        if (!this.isAdmin(ctx)) {
-            const clientIdentity = ctx.clientIdentity;
-            const userId = clientIdentity.getAttributeValue('hf.EnrollmentID');
-            throw new Error(`This function is restricted to admin users: your clientID is ${userId}`);
-        }
+        // TODO only admin
+        //if (!this.isAdmin(ctx)) {
+        //    const clientIdentity = ctx.clientIdentity;
+        //    const userId = clientIdentity.getAttributeValue('hf.EnrollmentID');
+        //    throw new Error(`This function is restricted to admin users: your clientID is ${userId}`);
+        //}
 
         const metadata = {
             fxRateApiToken: token,
@@ -135,6 +136,10 @@ class Remittance extends Contract {
         };
     */
     async ProposeTransaction(ctx, senderInfo, receiverInfo, value, participants) {
+        const participants_ = JSON.parse(participants);
+        const senderInfo_ = JSON.parse(senderInfo);
+        const receiverInfo_ = JSON.parse(receiverInfo);
+
         let _value;
         let _participants = [];
         let fxRates = [];
@@ -142,10 +147,10 @@ class Remittance extends Contract {
         const metadata = JSON.parse(await ctx.stub.getState('metadata'));
 
         // input 값 검증
-        if (!Array.isArray(participants)) {
+        if (!Array.isArray(participants_)) {
             throw new Error(`Argument participants should be array`);
         }
-        if (participants.length === 0) {
+        if (participants_.length === 0) {
             throw new Error(`Length of participants is at least 1`);
         }
 
@@ -163,7 +168,7 @@ class Remittance extends Contract {
                 code: await ctx.clientIdentity.getAttributeValue('hf.EnrollmentID'),
                 type: 'sender',
             },
-            ...participants.map(p => ({ code: p.code, type: p.type })),
+            ...participants_.map(p => ({ code: p.code, type: p.type })),
         ];
 
         // 참여자를 ReadBank 하여 가져옴
@@ -244,16 +249,16 @@ class Remittance extends Contract {
         const transaction = {
             id,
             senderInfo: {
-                name: senderInfo.name,
-                birthday: senderInfo.birthday,
-                address: senderInfo.address,
-                phoneNumber: senderInfo.phoneNumber,
+                name: senderInfo_.name,
+                birthday: senderInfo_.birthday,
+                address: senderInfo_.address,
+                phoneNumber: senderInfo_.phoneNumber,
             },
             receiverInfo: {
-                name: receiverInfo.name,
-                birthday: receiverInfo.birthday,
-                address: receiverInfo.address,
-                phoneNumber: receiverInfo.phoneNumber,
+                name: receiverInfo_.name,
+                birthday: receiverInfo_.birthday,
+                address: receiverInfo_.address,
+                phoneNumber: receiverInfo_.phoneNumber,
             },
             value: _value.toString(),
             participants: _participants,
@@ -263,9 +268,9 @@ class Remittance extends Contract {
         };
 
         const stateObj = stringify(sortKeysRecursive(transaction));
-        await ctx.stub.putState(`transaction:${id}`, stateObj);
-        await ctx.stub.putState(`receipt:${id}`, stringify(sortKeysRecursive(receipts)));
-        ctx.stub.setEvent('ProposeTransactionEvent', stateObj);
+        await ctx.stub.putState(`transaction:${id}`, Buffer.from(stateObj));
+        await ctx.stub.putState(`receipt:${id}`, Buffer.from(stringify(sortKeysRecursive({'foo': 'bar'}))));
+        ctx.stub.setEvent('ProposeTransactionEvent', Buffer.from(stateObj));
 
         return stateObj;
     }
@@ -299,8 +304,8 @@ class Remittance extends Contract {
         }
 
         const stateObj = stringify(sortKeysRecursive(tx));
-        await ctx.stub.putState(`transaction:${id}`, stateObj);
-        ctx.stub.setEvent('ApproveTransactionEvent', stateObj);
+        await ctx.stub.putState(`transaction:${id}`, Buffer.from(stateObj));
+        ctx.stub.setEvent('ApproveTransactionEvent', Buffer.from(stateObj));
 
         return stateObj;
     }

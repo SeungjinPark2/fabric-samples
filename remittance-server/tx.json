@@ -1,0 +1,21 @@
+{
+    "senderInfo": {
+        "name": "Park",
+        "address": "testaddress",
+        "birthday": "1999-11-01",
+        "phoneNumber": "010-0000-0000"
+    },
+    "receiverInfo": {
+        "name": "Jhone",
+        "address": "testaddress",
+        "birthday": "1999-11-01",
+        "phoneNumber": "010-0000-0000"
+    },
+    "value": "1000",
+    "participants": [
+        {
+            "code": "tempuser2",
+            "type": "receiver"
+        }
+    ]
+}

@@ -262,7 +262,7 @@ describe('Remittance Tests', () => {
             await liquiditySetup();
 
             clientIdentity.getAttributeValue.withArgs('hf.EnrollmentID').returns(bank.code);
-            const ret = await remittance.ProposeTransaction(transactionContext, senderInfo, receiverInfo, 1000, participants);
+            const ret = await remittance.ProposeTransaction(transactionContext, JSON.stringify(senderInfo), JSON.stringify(receiverInfo), 1000, JSON.stringify(participants));
             console.dir(JSON.parse(ret), { depth: null });
 
             const receipts = await remittance.ReadReceipt(transactionContext, JSON.parse(ret).id);
@@ -288,7 +288,7 @@ describe('Remittance Tests', () => {
             clientIdentity.getAttributeValue.withArgs('hf.EnrollmentID').returns(bank.code);
 
             try {
-                await remittance.ProposeTransaction(transactionContext, senderInfo, receiverInfo, 1000, participants);
+                await remittance.ProposeTransaction(transactionContext, JSON.stringify(senderInfo), JSON.stringify(receiverInfo), 1000, JSON.stringify(participants));
                 assert.fail(`The bank ${bank3.code} does not exists on ${bank2.code}`);
             } catch (err) {
                 expect(err.message).to.equal(`The bank ${bank3.code} does not exists on ${bank2.code}`);
@@ -300,7 +300,7 @@ describe('Remittance Tests', () => {
             await liquiditySetup();
 
             clientIdentity.getAttributeValue.withArgs('hf.EnrollmentID').returns(bank.code);
-            const ret = JSON.parse(await remittance.ProposeTransaction(transactionContext, senderInfo, receiverInfo, 1000, participants));
+            const ret = JSON.parse(await remittance.ProposeTransaction(transactionContext, JSON.stringify(senderInfo), JSON.stringify(receiverInfo), 1000, JSON.stringify(participants)));
 
             clientIdentity.getAttributeValue.withArgs('hf.EnrollmentID').returns(bank2.code);
             const approvedTxFromBank2 = JSON.parse(await remittance.ApproveTransaction(transactionContext, ret.id, 'approve'));
