@@ -23,12 +23,16 @@ let gateway;
 let network;
 let contract;
 
+async function createNetwork(ccp, gatewayOpts) {
+    await gateway.connect(ccp, gatewayOpts);
+    network = await gateway.getNetwork(channelName);
+    contract = network.getContract(chaincodeName);
+}
+
 async function setup() {
     try {
         const ccp = buildCCPOrg(orgNum);
-
         const caClient = buildCAClient(ccp, `ca.org${orgNum}.example.com`);
-
         const wallet = await buildWallet(walletPath);
 
         if (!skipInit) {
@@ -40,29 +44,21 @@ async function setup() {
 
         const gatewayOpts: GatewayOptions = {
             wallet,
-            identity: userId,
+            identity: 'admin',
             discovery: { enabled: true, asLocalhost: true },
         };
 
-        try {
-            await gateway.connect(ccp, gatewayOpts);
+        await createNetwork(ccp, gatewayOpts);
 
-            // Build a network instance based on the channel where the smart contract is deployed
-            network = await gateway.getNetwork(channelName);
-
-            // Get the contract from the network.
-            contract = network.getContract(chaincodeName);
-
+        if (!skipChaincodeInit) {
             console.log('\n--> Submit Transaction: InitLedger, function creates the initial set of assets on the ledger');
             await contract.submitTransaction('Init','fxr_live_b1e7580ba98491842a59797583c3d681e5af', 'https://api.fxratesapi.com/');
             console.log('*** Result: committed');
-
-            //console.log('\n--> Evaluate Transaction: GetAllAssets, function returns all the current assets on the ledger');
-            //let result = await contract.evaluateTransaction('GetAllAssets');
-            //console.log(`*** Result: ${prettyJSONString(result.toString())}`);
-        } finally {
-            gateway.disconnect();
         }
+
+        gateway.disconnect();
+        gatewayOpts.identity = userId;
+        await createNetwork(ccp, gatewayOpts);
     } catch (error) {
         console.error(`******** FAILED to run the application: ${error}`);
         process.exit(1);
