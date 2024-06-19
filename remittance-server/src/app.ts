@@ -11,6 +11,7 @@ import 'dotenv/config';
 import express, { Request, Response, NextFunction } from 'express';
 import bodyParser from 'body-parser';
 import 'express-async-errors';
+import {uuid} from 'uuidv4';
 
 const app = express();
 
@@ -135,13 +136,14 @@ type Participant = {
 };
 
 app.post('/transaction', async (req: Request, res: Response, next: NextFunction) => {
+    const id = uuid();
     const senderInfo = JSON.stringify(req.body.senderInfo as PersonInfo);
     const receiverInfo = JSON.stringify(req.body.receiverInfo as PersonInfo);
     const value = req.body.value as string;
     const participants = JSON.stringify(req.body.participants as Participant[]);
     console.log(req.body);
 
-    const result = (await contract.submitTransaction('ProposeTransaction', senderInfo, receiverInfo, value, participants)).toString();
+    const result = (await contract.submitTransaction('ProposeTransaction', id, senderInfo, receiverInfo, value, participants)).toString();
 
     res.send(JSON.parse(result));
 });

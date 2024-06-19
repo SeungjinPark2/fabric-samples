@@ -135,7 +135,7 @@ class Remittance extends Contract {
             ]
         };
     */
-    async ProposeTransaction(ctx, senderInfo, receiverInfo, value, participants) {
+    async ProposeTransaction(ctx, id, senderInfo, receiverInfo, value, participants) {
         const participants_ = JSON.parse(participants);
         const senderInfo_ = JSON.parse(senderInfo);
         const receiverInfo_ = JSON.parse(receiverInfo);
@@ -143,7 +143,6 @@ class Remittance extends Contract {
         let _value;
         let _participants = [];
         let fxRates = [];
-        const id = uuid();
         const metadata = JSON.parse(await ctx.stub.getState('metadata'));
 
         // input 값 검증
@@ -264,12 +263,11 @@ class Remittance extends Contract {
             participants: _participants,
             fxRates,
             status: 'pending',
-            createTime: Date.now(),
         };
 
         const stateObj = stringify(sortKeysRecursive(transaction));
         await ctx.stub.putState(`transaction:${id}`, Buffer.from(stateObj));
-        await ctx.stub.putState(`receipt:${id}`, Buffer.from(stringify(sortKeysRecursive({'foo': 'bar'}))));
+        await ctx.stub.putState(`receipt:${id}`, Buffer.from(stringify(sortKeysRecursive(receipts))));
         ctx.stub.setEvent('ProposeTransactionEvent', Buffer.from(stateObj));
 
         return stateObj;
