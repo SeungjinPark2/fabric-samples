@@ -7,87 +7,78 @@
 'use strict';
 
 // Deterministic JSON.stringify()
-const stringify  = require('json-stringify-deterministic');
-const sortKeysRecursive  = require('sort-keys-recursive');
+const stringify = require('json-stringify-deterministic');
+const sortKeysRecursive = require('sort-keys-recursive');
 const { Contract } = require('fabric-contract-api');
-const { uuid } = require('uuidv4');
+// const { uuid } = require('uuidv4');
 const { BigNumber } = require('bignumber.js');
 
 class Remittance extends Contract {
     async Init(ctx, token, apiEndpoint) {
-        // TODO only admin
-        //if (!this.isAdmin(ctx)) {
-        //    const clientIdentity = ctx.clientIdentity;
-        //    const userId = clientIdentity.getAttributeValue('hf.EnrollmentID');
-        //    throw new Error(`This function is restricted to admin users: your clientID is ${userId}`);
-        //}
-
         const metadata = {
-            fxRateApiToken: token,
+            apiToken: token,
             apiEndpoint,
         };
-
         const stateObj = stringify(sortKeysRecursive(metadata));
-
-        await ctx.stub.putState(`apiToken:${token}`, Buffer.from(token));
         await ctx.stub.putState(`metadata`, Buffer.from(stateObj));
 
         return stateObj;
     }
 
-    // 어드민인지 확인하는 함수
-    isAdmin(ctx) {
-        const clientIdentity = ctx.clientIdentity;
-        const userId = clientIdentity.getAttributeValue('hf.EnrollmentID');
-
-        const regex = /admin$/;
-        return regex.test(userId);
-    }
-
-    // currencyCode 는 은행이 취급하는 법정화폐를 의미한다. 아마 배열로 만드는 것이 맞겠지만 1개로 가정하고 프로젝트를 구성한다.
+    // 블록체인에 피어 노드로 참여한 은행은 체인코드에 스스로를 등록하는 절차를 가져야 한다.
+    // currencyCode 는 해당 은행이 취급하는 화폐로 단순화를 위해 단일 종류의 화폐를 취급한다고 가정.
     async RegisterBank(ctx, currencyCode) {
         const clientIdentity = ctx.clientIdentity;
-        // 일반 유저는 SWIFTCODE 를 userId 로 가진다고 가정
-        const userId = clientIdentity.getAttributeValue('hf.EnrollmentID');
-        const exists = await this.BankExists(ctx, userId);
+        // 피어노드로 참여할 때 사용된 ID를 은행코드로 사용한다.
+        const bankCode = clientIdentity.getAttributeValue('hf.EnrollmentID');
+        const exists = await this.BankExists(ctx, bankCode);
 
         if (exists) {
-            throw new Error(`The bank ${code} already exists`);
+            throw new Error(`The bank ${bankCode} already exists`);
         }
 
-        const bank = {
-            code: userId,
-            currencyCode,
-            available: true,
-            accounts: [],
-        };
+        const stateObj = stringify(
+            sortKeysRecursive({
+                code: bankCode,
+                currencyCode,
+                accounts: [],
+            })
+        );
 
-        const stateObj = stringify(sortKeysRecursive(bank));
+        await ctx.stub.putState(`bank:${bankCode}`, Buffer.from(stateObj));
 
-        await ctx.stub.putState(`bank:${userId}`, Buffer.from(stateObj));
-        return stateObj;
+        return JSON.parse(stateObj);
     }
 
     async CreateAccount(ctx, bankCode) {
         const self = JSON.parse(await this.ReadBank(ctx));
         const bank = JSON.parse(await this.ReadBank(ctx, bankCode));
-        const exists = self.accounts.find(b => b.code == bankCode);
+        const exists = self.accounts.find((b) => b.code == bankCode);
 
         if (exists) {
             throw new Error(`The bank ${bankCode} already exists on ${self}`);
         }
-        self.accounts.push({ code: bank.code, currencyCode: bank.currencyCode, liquidity: 0 });
+        self.accounts.push({
+            code: bank.code,
+            currencyCode: bank.currencyCode,
+            liquidity: 0,
+        });
 
-        const stateObj = stringify(sortKeysRecursive(self))
+        const stateObj = stringify(sortKeysRecursive(self));
 
         await ctx.stub.putState(`bank:${self.code}`, Buffer.from(stateObj));
         return stateObj;
     }
 
     // apply liquidity, liquidity can either be positive, negative
-    async ApplyLiquidity(ctx, accountCode, liquidity, code/*: undefined || string */) {
+    async ApplyLiquidity(
+        ctx,
+        accountCode,
+        liquidity,
+        code /*: undefined || string */
+    ) {
         const bank = JSON.parse(await this.ReadBank(ctx, code));
-        const account = bank.accounts.find(a => a.code == accountCode);
+        const account = bank.accounts.find((a) => a.code == accountCode);
 
         if (account == null) {
             throw new Error(`Cannot find account ${accountCode}`);
@@ -135,7 +126,14 @@ class Remittance extends Contract {
             ]
         };
     */
-    async ProposeTransaction(ctx, id, senderInfo, receiverInfo, value, participants) {
+    async ProposeTransaction(
+        ctx,
+        id,
+        senderInfo,
+        receiverInfo,
+        value,
+        participants
+    ) {
         const participants_ = JSON.parse(participants);
         const senderInfo_ = JSON.parse(senderInfo);
         const receiverInfo_ = JSON.parse(receiverInfo);
@@ -164,44 +162,57 @@ class Remittance extends Contract {
 
         _participants = [
             {
-                code: await ctx.clientIdentity.getAttributeValue('hf.EnrollmentID'),
+                code: await ctx.clientIdentity.getAttributeValue(
+                    'hf.EnrollmentID'
+                ),
                 type: 'sender',
             },
-            ...participants_.map(p => ({ code: p.code, type: p.type })),
+            ...participants_.map((p) => ({ code: p.code, type: p.type })),
         ];
 
         // 참여자를 ReadBank 하여 가져옴
-        const fetchedParticipants = await Promise.all(_participants.map(p =>
-            this.ReadBank(ctx, p.code).then(bank => ({
-                ...JSON.parse(bank),
-                type: p.type,
-            })),
-        ));
+        const fetchedParticipants = await Promise.all(
+            _participants.map((p) =>
+                this.ReadBank(ctx, p.code).then((bank) => ({
+                    ...JSON.parse(bank),
+                    type: p.type,
+                }))
+            )
+        );
 
         for (let i = 0; i < fetchedParticipants.length - 1; i++) {
             const current = fetchedParticipants[i];
             const next = fetchedParticipants[i + 1];
-            const exists = current.accounts.find(a => a.code === next.code);
+            const exists = current.accounts.find((a) => a.code === next.code);
 
             if (exists == null) {
-                throw new Error(`The bank ${next.code} does not exists on ${current.code}`);
+                throw new Error(
+                    `The bank ${next.code} does not exists on ${current.code}`
+                );
             }
         }
 
-        const currencies = [...new Set(fetchedParticipants.map(p => p.currencyCode))];
+        const currencies = [
+            ...new Set(fetchedParticipants.map((p) => p.currencyCode)),
+        ];
 
         // 환율을 구한다.
         if (currencies.length > 1) {
             const fetches = [];
-            const getFxRate = async (base, currency) => fetch(`${metadata.apiEndpoint}/latest?base=${base}&currencies=${currency}&resolution=1m&amount=1&places=6&format=json&api_key=${metadata.apiToken}`)
-                .then(res => res.json())
-                .catch(err => { throw new Error(`Fetch failed, reason: ${err.message}`)});
+            const getFxRate = async (base, currency) =>
+                fetch(
+                    `${metadata.apiEndpoint}/latest?base=${base}&currencies=${currency}&resolution=1m&amount=1&places=6&format=json&api_key=${metadata.apiToken}`
+                )
+                    .then((res) => res.json())
+                    .catch((err) => {
+                        throw new Error(`Fetch failed, reason: ${err.message}`);
+                    });
 
             for (let i = 0; i < currencies.length - 1; i++) {
                 fetches.push(getFxRate(currencies[i], currencies[i + 1]));
             }
 
-            fxRates = (await Promise.all(fetches)).map(rate => ({
+            fxRates = (await Promise.all(fetches)).map((rate) => ({
                 base: rate.base,
                 target: rate.rates,
             }));
@@ -212,23 +223,38 @@ class Remittance extends Contract {
         // 영수증 발행. 추후 approve 가 완료되면 적용되는 구조이다.
         for (let i = 0; i < fetchedParticipants.length; i++) {
             const current = fetchedParticipants[i];
-            const next = i < fetchedParticipants.length - 1 ? fetchedParticipants[i + 1] : null;
+            const next =
+                i < fetchedParticipants.length - 1
+                    ? fetchedParticipants[i + 1]
+                    : null;
             const before = i > 0 ? fetchedParticipants[i - 1] : null;
             let rate = 1;
 
             if (before !== null) {
                 if (current.currencyCode !== before.currencyCode) {
-                    const fRate = fxRates.find(f => f.base === before.currencyCode);
+                    const fRate = fxRates.find(
+                        (f) => f.base === before.currencyCode
+                    );
                     if (rate == null) {
-                        throw new Error(`Can not find fxRate, base:${before.currencyCode} target: ${current.currencyCode}`);
-                    };
+                        throw new Error(
+                            `Can not find fxRate, base:${before.currencyCode} target: ${current.currencyCode}`
+                        );
+                    }
                     rate = fRate.target[current.currencyCode];
                 }
             }
 
             const list = [];
-            before && list.push({ target: before.code, value: __value.multipliedBy(rate).negated().toString() });
-            next   && list.push({ target: next.code, value: __value.multipliedBy(rate).toString() });
+            before &&
+                list.push({
+                    target: before.code,
+                    value: __value.multipliedBy(rate).negated().toString(),
+                });
+            next &&
+                list.push({
+                    target: next.code,
+                    value: __value.multipliedBy(rate).toString(),
+                });
             receipts.push({
                 code: current.code,
                 list,
@@ -267,23 +293,33 @@ class Remittance extends Contract {
 
         const stateObj = stringify(sortKeysRecursive(transaction));
         await ctx.stub.putState(`transaction:${id}`, Buffer.from(stateObj));
-        await ctx.stub.putState(`receipt:${id}`, Buffer.from(stringify(sortKeysRecursive(receipts))));
+        await ctx.stub.putState(
+            `receipt:${id}`,
+            Buffer.from(stringify(sortKeysRecursive(receipts)))
+        );
         ctx.stub.setEvent('ProposeTransactionEvent', Buffer.from(stateObj));
 
         return stateObj;
     }
 
-    async ApproveTransaction(ctx, id, choice /*: approve | reject */, reason /*: undefined | string*/) {
+    async ApproveTransaction(
+        ctx,
+        id,
+        choice /*: approve | reject */,
+        reason /*: undefined | string*/
+    ) {
         const bank = JSON.parse(await this.ReadBank(ctx));
         const tx = JSON.parse(await this.ReadTransaction(ctx, id));
-        const participant = tx.participants.find(p => p.code === bank.code);
+        const participant = tx.participants.find((p) => p.code === bank.code);
         let flag = true;
 
         if (tx.status !== 'pending') {
             throw new Error(`Transaction ${id} is already done or failed`);
         }
         if (participant == null) {
-            throw new Error(`Bank ${bank.code} is not a participant of transaction ${id}`);
+            throw new Error(
+                `Bank ${bank.code} is not a participant of transaction ${id}`
+            );
         }
 
         participant.approved = choice === 'approve';
@@ -292,7 +328,7 @@ class Remittance extends Contract {
             participant.reason = reason;
         }
 
-        tx.participants.forEach(p => {
+        tx.participants.forEach((p) => {
             flag = flag && p.approved;
         });
 
@@ -316,7 +352,10 @@ class Remittance extends Contract {
             }
         }
 
-        ctx.stub.setEvent('ApplyReceiptEvent', stringify(sortKeysRecursive(receipt)));
+        ctx.stub.setEvent(
+            'ApplyReceiptEvent',
+            stringify(sortKeysRecursive(receipt))
+        );
     }
 
     async ReadBank(ctx, code) {
