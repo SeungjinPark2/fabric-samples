@@ -1,26 +1,34 @@
-/*
- * Copyright IBM Corp. All Rights Reserved.
- *
- * SPDX-License-Identifier: Apache-2.0
- */
-
 'use strict';
 
-// Deterministic JSON.stringify()
 const stringify = require('json-stringify-deterministic');
 const sortKeysRecursive = require('sort-keys-recursive');
 const { Contract } = require('fabric-contract-api');
-// const { uuid } = require('uuidv4');
 const { BigNumber } = require('bignumber.js');
+const { stateParser } = require('../utils');
+const { getFxRate } = require('./getFxRate');
+const { uuid } = require('uuidv4');
+
+const TxStatus = {
+    ONGOING: 0,
+    DONE: 1,
+    REJECTED: 2,
+};
+
+const AgreementStatus = {
+    ONGOING: 0,
+    DONE: 1,
+    REJECTED: 2,
+};
 
 class Remittance extends Contract {
-    async Init(ctx, token, apiEndpoint) {
+    async Init(ctx, token, apiEndpoint, fee) {
         const metadata = {
             apiToken: token,
             apiEndpoint,
+            fee,
         };
         const stateObj = stringify(sortKeysRecursive(metadata));
-        await ctx.stub.putState(`metadata`, Buffer.from(stateObj));
+        await ctx.stub.putState('metadata', Buffer.from(stateObj));
 
         return stateObj;
     }
@@ -41,7 +49,7 @@ class Remittance extends Contract {
             sortKeysRecursive({
                 code: bankCode,
                 currencyCode,
-                accounts: [],
+                correnpondentBanks /*: string[] */: [],
             })
         );
 
@@ -50,344 +58,228 @@ class Remittance extends Contract {
         return JSON.parse(stateObj);
     }
 
+    // 환거래은행 관계를 맺게되는 함수,
     async CreateAccount(ctx, bankCode) {
-        const self = JSON.parse(await this.ReadBank(ctx));
-        const bank = JSON.parse(await this.ReadBank(ctx, bankCode));
-        const exists = self.accounts.find((b) => b.code == bankCode);
+        const ourCode = ctx.clientIdentity.getAttributeValue('hf.EnrollmentID');
+        const self = stateParser(await this.ReadBank(ctx, ourCode));
+        const exists = self.correnpondentBanks.find((c) => c === bankCode);
 
         if (exists) {
-            throw new Error(`The bank ${bankCode} already exists on ${self}`);
+            throw new Error(
+                `The bank ${bankCode} already exists on ${ourCode}`
+            );
         }
-        self.accounts.push({
-            code: bank.code,
-            currencyCode: bank.currencyCode,
-            liquidity: 0,
-        });
 
+        self.correnpondentBanks.push(bankCode);
         const stateObj = stringify(sortKeysRecursive(self));
-
         await ctx.stub.putState(`bank:${self.code}`, Buffer.from(stateObj));
+
         return stateObj;
     }
 
-    // apply liquidity, liquidity can either be positive, negative
-    async ApplyLiquidity(
+    // 중계은행을 포함한 여러 루트를 찾는다, 마지막 인자에 따라 최대 탐색 깊이를 설정한다.
+    async FindRoutes(
         ctx,
-        accountCode,
-        liquidity,
-        code /*: undefined || string */
+        finalBankCode,
+        routes, // final routes [[...], [...], [...], ...]
+        cr, // current route, initial value to be [currentBankCode]
+        maxParticipant = 3 // 최대 루트 길이 (max depth)
     ) {
-        const bank = JSON.parse(await this.ReadBank(ctx, code));
-        const account = bank.accounts.find((a) => a.code == accountCode);
+        if (cr[cr.length - 1] === finalBankCode) return true;
+        else if (cr.length === maxParticipant) return false;
 
-        if (account == null) {
-            throw new Error(`Cannot find account ${accountCode}`);
+        const cb = stateParser(await this.ReadBank(ctx, cr[cr.length - 1]));
+
+        for (const cc of cb.correnpondentBanks) {
+            if (cr.find((_c) => _c === cc) != null) continue; // 이제껏 선택해온 것은 들여다 보지 않음.
+            cr.push(cc);
+
+            const found = await this.FindRoutes(
+                ctx,
+                finalBankCode,
+                routes,
+                [...cr], // 얕은복사
+                maxParticipant
+            );
+
+            if (found) routes.push([...cr]);
+            cr.pop();
         }
 
-        const liq = new BigNumber(account.liquidity);
-        const calculated = liq.plus(liquidity);
-
-        if (calculated.lte(0)) {
-            throw new Error(`Liquidity can not be negative`);
-        }
-
-        account.liquidity = calculated.toString();
-
-        const stateObj = stringify(sortKeysRecursive(bank));
-
-        await ctx.stub.putState(`bank:${bank.code}`, Buffer.from(stateObj));
-        return stateObj;
+        return false;
     }
-    /*
-        sender{receiver}Info: {
-            name: string,
-            birthday: timestamp,
-            address: string,
-            phoneNumber: string,
-        };
-        participant: {
-            code: string,
-            approved: boolean,
-            type: 'sender' | 'intermediary' | 'receiver',
-            reason: string, // empty or reason with not approving
-            currencyCode: string,
-        };
-        transaction: {
-            id: transaction_id,
-            senderInfo,
-            receiverInfo,
-            value: string,
-            participants: participant[],
-            status: 'pending' | 'failed' | 'done',
-            createTime: timestamp,
-            fxRates: [
-                'KRW:USD:0.000727',
-                ...
-            ]
-        };
-    */
-    async ProposeTransaction(
-        ctx,
-        id,
-        senderInfo,
-        receiverInfo,
-        value,
-        participants
-    ) {
-        const participants_ = JSON.parse(participants);
-        const senderInfo_ = JSON.parse(senderInfo);
-        const receiverInfo_ = JSON.parse(receiverInfo);
 
-        let _value;
-        let _participants = [];
-        let fxRates = [];
+    // 트렌젝션 시뮬레이션, 참여자 및 수수료 등 미리 확인.
+    async PreflightTx(ctx, sender, receiver, receiverBankCode, amount) {
         const metadata = JSON.parse(await ctx.stub.getState('metadata'));
+        const fee = metadata.fee / 100; // 수수료율
+        const senderBankCode =
+            ctx.clientIdentity.getAttributeValue('hf.EnrollmentID');
 
-        // input 값 검증
-        if (!Array.isArray(participants_)) {
-            throw new Error(`Argument participants should be array`);
-        }
-        if (participants_.length === 0) {
-            throw new Error(`Length of participants is at least 1`);
-        }
+        const routes /*: code[]*/ = [];
+        await this.FindRoutes(ctx, receiverBankCode, routes, [senderBankCode]);
 
-        if (isNaN(value)) {
-            throw new Error(`Value should be number`);
-        } else {
-            _value = new BigNumber(value);
-            if (_value.lte(0)) {
-                throw new Error(`Value can not be negative`);
-            }
-        }
+        const preparedTxs = [];
 
-        _participants = [
-            {
-                code: await ctx.clientIdentity.getAttributeValue(
-                    'hf.EnrollmentID'
-                ),
-                type: 'sender',
-            },
-            ...participants_.map((p) => ({ code: p.code, type: p.type })),
-        ];
+        // 간단하게 2중 for문으로 해결. 실제 사례에서는 성능을 생각해서 병렬적으로 구성해야함.
+        for (let i = 0; i < routes.length; i++) {
+            let _amount = new BigNumber(amount);
+            const agreements = [];
 
-        // 참여자를 ReadBank 하여 가져옴
-        const fetchedParticipants = await Promise.all(
-            _participants.map((p) =>
-                this.ReadBank(ctx, p.code).then((bank) => ({
-                    ...JSON.parse(bank),
-                    type: p.type,
-                }))
-            )
-        );
-
-        for (let i = 0; i < fetchedParticipants.length - 1; i++) {
-            const current = fetchedParticipants[i];
-            const next = fetchedParticipants[i + 1];
-            const exists = current.accounts.find((a) => a.code === next.code);
-
-            if (exists == null) {
-                throw new Error(
-                    `The bank ${next.code} does not exists on ${current.code}`
+            // 각 route 에 관해 환율과 수수료에 따른 값 변화를 나타냄.
+            for (let j = 0; j < routes[i].length - 1; j++) {
+                let cb = stateParser(await this.ReadBank(ctx, routes[i][j]));
+                const nb = stateParser(
+                    await this.ReadBank(ctx, routes[i][j + 1])
                 );
-            }
-        }
 
-        const currencies = [
-            ...new Set(fetchedParticipants.map((p) => p.currencyCode)),
-        ];
+                const rate = await getFxRate(
+                    metadata,
+                    cb.currencyCode,
+                    nb.currencyCode
+                );
 
-        // 환율을 구한다.
-        if (currencies.length > 1) {
-            const fetches = [];
-            const getFxRate = async (base, currency) =>
-                fetch(
-                    `${metadata.apiEndpoint}/latest?base=${base}&currencies=${currency}&resolution=1m&amount=1&places=6&format=json&api_key=${metadata.apiToken}`
-                )
-                    .then((res) => res.json())
-                    .catch((err) => {
-                        throw new Error(`Fetch failed, reason: ${err.message}`);
+                const collected = _amount
+                    .multipliedBy(fee)
+                    .decimalPlaces(6, BigNumber.ROUND_HALF_UP);
+                const nAmount = _amount.minus(collected);
+                _amount = nAmount
+                    .multipliedBy(rate)
+                    .decimalPlaces(6, BigNumber.ROUND_HALF_UP);
+
+                agreements.push({
+                    code: cb.code,
+                    currencyCode: cb.currencyCode,
+                    collectedFee: collected.toString(),
+                    amount: nAmount.toString(),
+                });
+
+                // 마지막 케이스에만 한번 더 구해줌.
+                // TODO 코드 줄일 방법 모색.
+                if (j === routes[i].length - 2) {
+                    const collected = _amount
+                        .multipliedBy(fee)
+                        .decimalPlaces(6, BigNumber.ROUND_HALF_UP);
+                    const nAmount = _amount.minus(collected);
+
+                    agreements.push({
+                        code: nb.code,
+                        currencyCode: nb.currencyCode,
+                        collectedFee: collected.toString(),
+                        amount: nAmount.toString(),
                     });
-
-            for (let i = 0; i < currencies.length - 1; i++) {
-                fetches.push(getFxRate(currencies[i], currencies[i + 1]));
-            }
-
-            fxRates = (await Promise.all(fetches)).map((rate) => ({
-                base: rate.base,
-                target: rate.rates,
-            }));
-        }
-
-        const receipts = [];
-        let __value = _value;
-        // 영수증 발행. 추후 approve 가 완료되면 적용되는 구조이다.
-        for (let i = 0; i < fetchedParticipants.length; i++) {
-            const current = fetchedParticipants[i];
-            const next =
-                i < fetchedParticipants.length - 1
-                    ? fetchedParticipants[i + 1]
-                    : null;
-            const before = i > 0 ? fetchedParticipants[i - 1] : null;
-            let rate = 1;
-
-            if (before !== null) {
-                if (current.currencyCode !== before.currencyCode) {
-                    const fRate = fxRates.find(
-                        (f) => f.base === before.currencyCode
-                    );
-                    if (rate == null) {
-                        throw new Error(
-                            `Can not find fxRate, base:${before.currencyCode} target: ${current.currencyCode}`
-                        );
-                    }
-                    rate = fRate.target[current.currencyCode];
                 }
             }
 
-            const list = [];
-            before &&
-                list.push({
-                    target: before.code,
-                    value: __value.multipliedBy(rate).negated().toString(),
-                });
-            next &&
-                list.push({
-                    target: next.code,
-                    value: __value.multipliedBy(rate).toString(),
-                });
-            receipts.push({
-                code: current.code,
-                list,
-            });
-
-            __value = __value.multipliedBy(rate);
+            preparedTxs.push(agreements);
         }
 
-        _participants = fetchedParticipants.map((fp, i) => ({
-            code: fp.code,
-            approved: i === 0,
-            type: i === 0 ? 'sender' : fp.type,
-            reason: '', // empty or reason with not approving
-            currencyCode: fp.currencyCode,
+        return {
+            sender,
+            receiver,
+            preparedTxs,
+        };
+    }
+
+    /* txObject
+    sender: {
+        firstname: string,
+        lastname: string,
+        accountNumber: string,
+    },
+    receiver: {
+        firstname: string,
+        lastname: string,
+        accountNumber: string,
+    },
+    agreements: [
+        {
+            code: nb.code,
+            currencyCode: nb.currencyCode,
+            collectedFee: collected.toString(),
+            amount: nAmount.toString(), 
+        },
+        ...
+    ]
+    */
+    async ProposeTransaction(ctx, txObject) {
+        const code = ctx.clientIdentity.getAttributeValue('hf.EnrollmentID');
+
+        txObject.agreements = txObject.agreements.map((t) => ({
+            ...t,
+            status:
+                t.code === code
+                    ? AgreementStatus.DONE
+                    : AgreementStatus.ONGOING, // 발의한 은행은 동의한것으로 간주
         }));
 
-        const transaction = {
-            id,
-            senderInfo: {
-                name: senderInfo_.name,
-                birthday: senderInfo_.birthday,
-                address: senderInfo_.address,
-                phoneNumber: senderInfo_.phoneNumber,
-            },
-            receiverInfo: {
-                name: receiverInfo_.name,
-                birthday: receiverInfo_.birthday,
-                address: receiverInfo_.address,
-                phoneNumber: receiverInfo_.phoneNumber,
-            },
-            value: _value.toString(),
-            participants: _participants,
-            fxRates,
-            status: 'pending',
-        };
+        txObject.id = uuid();
+        txObject.status = AgreementStatus.ONGOING;
+        txObject.reason = '';
 
-        const stateObj = stringify(sortKeysRecursive(transaction));
-        await ctx.stub.putState(`transaction:${id}`, Buffer.from(stateObj));
+        const stateObj = stringify(sortKeysRecursive(txObject));
         await ctx.stub.putState(
-            `receipt:${id}`,
-            Buffer.from(stringify(sortKeysRecursive(receipts)))
+            `transaction:${txObject.id}`,
+            Buffer.from(stateObj)
         );
-        ctx.stub.setEvent('ProposeTransactionEvent', Buffer.from(stateObj));
-
         return stateObj;
     }
 
     async ApproveTransaction(
         ctx,
         id,
-        choice /*: approve | reject */,
-        reason /*: undefined | string*/
+        choice /* 'approve' | 'reject' */,
+        reason = ''
     ) {
-        const bank = JSON.parse(await this.ReadBank(ctx));
-        const tx = JSON.parse(await this.ReadTransaction(ctx, id));
-        const participant = tx.participants.find((p) => p.code === bank.code);
-        let flag = true;
+        const code = ctx.clientIdentity.getAttributeValue('hf.EnrollmentID');
+        const tx = stateParser(await this.ReadTransaction(ctx, id));
+        const agreements = tx.agreements;
+        const agreementUnit = agreements.find((a) => a.code === code);
 
-        if (tx.status !== 'pending') {
-            throw new Error(`Transaction ${id} is already done or failed`);
-        }
-        if (participant == null) {
-            throw new Error(
-                `Bank ${bank.code} is not a participant of transaction ${id}`
-            );
+        if (
+            tx.status !== TxStatus.ONGOING ||
+            agreementUnit.status !== AgreementStatus.ONGOING
+        ) {
+            throw new Error(`Invalid approval trial for transaction ${id}`);
         }
 
-        participant.approved = choice === 'approve';
         if (choice === 'reject') {
-            tx.status = 'failed';
-            participant.reason = reason;
+            tx.status = TxStatus.REJECTED;
+            tx.reason = reason;
+            // make event
+        } else {
+            agreementUnit.status = AgreementStatus.DONE;
         }
 
-        tx.participants.forEach((p) => {
-            flag = flag && p.approved;
-        });
-
-        if (flag) {
-            await this.ApplyReceipt(ctx, id);
-            tx.status = 'done';
+        let allUnitsAreApproved = true;
+        for (const unit of agreements) {
+            if (unit.status !== AgreementStatus.DONE)
+                allUnitsAreApproved = false;
         }
+        if (allUnitsAreApproved) tx.status = TxStatus.DONE;
 
         const stateObj = stringify(sortKeysRecursive(tx));
         await ctx.stub.putState(`transaction:${id}`, Buffer.from(stateObj));
-        ctx.stub.setEvent('ApproveTransactionEvent', Buffer.from(stateObj));
 
         return stateObj;
     }
 
-    async ApplyReceipt(ctx, id) {
-        const receipt = JSON.parse(await this.ReadReceipt(ctx, id));
-        for (const r of receipt) {
-            for (const l of r.list) {
-                await this.ApplyLiquidity(ctx, l.target, l.value, r.code);
-            }
-        }
-
-        ctx.stub.setEvent(
-            'ApplyReceiptEvent',
-            stringify(sortKeysRecursive(receipt))
-        );
-    }
-
     async ReadBank(ctx, code) {
-        let bankJSON;
-        if (code) {
-            bankJSON = await ctx.stub.getState(`bank:${code}`); // get the bank from chaincode state
-        } else {
-            const clientIdentity = ctx.clientIdentity;
-            const userId = clientIdentity.getAttributeValue('hf.EnrollmentID');
-            bankJSON = await ctx.stub.getState(`bank:${userId}`); // get the bank from chaincode state
+        const bank = await ctx.stub.getState(`bank:${code}`); // get the bank from chaincode state
+
+        if (!bank || bank.length === 0) {
+            throw new Error(`The bank ${code} does not exist`);
         }
 
-        if (!bankJSON || bankJSON.length === 0) {
-            throw new Error(`The asset ${code} does not exist`);
-        }
-        return bankJSON.toString();
+        return bank;
     }
 
     async ReadTransaction(ctx, id) {
-        const txJson = await ctx.stub.getState(`transaction:${id}`); // get the bank from chaincode state
-        if (!txJson || txJson.length === 0) {
+        const tx = await ctx.stub.getState(`transaction:${id}`); // get the bank from chaincode state
+        if (!tx || tx.length === 0) {
             throw new Error(`The asset ${id} does not exist`);
         }
-        return txJson.toString();
-    }
-
-    async ReadReceipt(ctx, id) {
-        const receiptJson = await ctx.stub.getState(`receipt:${id}`);
-        if (!receiptJson || receiptJson.length === 0) {
-            throw new Error(`The asset ${id} does not exist`);
-        }
-        return receiptJson.toString();
+        return tx;
     }
 
     async BankExists(ctx, code) {

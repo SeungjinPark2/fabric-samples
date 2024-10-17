@@ -10,12 +10,16 @@
     "scripts": {
         "lint": "eslint *.js */**.js",
         "test": "nyc mocha --recursive",
+        "test:findRoutes": "nyc mocha test/findRoutes.test.js",
+        "test:transaction": "nyc mocha test/transaction.test.js",
         "start": "fabric-chaincode-node start"
     },
     "engineStrict": true,
     "author": "Hyperledger",
     "license": "Apache-2.0",
     "dependencies": {
+        "axios": "^1.7.7",
+        "babel-eslint": "^10.1.0",
         "bignumber.js": "^9.1.2",
         "fabric-contract-api": "^2.0.0",
         "fabric-shim": "^2.0.0",
@@ -24,6 +28,7 @@
         "uuidv4": "^6.2.13"
     },
     "devDependencies": {
+        "@eslint/js": "^9.12.0",
         "chai": "^4.1.2",
         "eslint": "^4.19.1",
         "mocha": "^8.0.1",

@@ -1,0 +1,64 @@
+{
+    "banks": [
+        {
+            "code": "DEMOBANK1",
+            "currencyCode": "KRW",
+            "correnpondentBanks": []
+        },
+        {
+            "code": "DEMOBANK2",
+            "currencyCode": "JPY",
+            "correnpondentBanks": []
+        },
+        {
+            "code": "DEMOBANK3",
+            "currencyCode": "USD",
+            "correnpondentBanks": []
+        },
+        {
+            "code": "DEMOBANK4",
+            "currencyCode": "RUB",
+            "correnpondentBanks": []
+        },
+        {
+            "code": "DEMOBANK5",
+            "currencyCode": "EUR",
+            "correnpondentBanks": []
+        },
+        {
+            "code": "DEMOBANK6",
+            "currencyCode": "MXN",
+            "correnpondentBanks": []
+        }
+    ],
+    "preparedTx": [
+        {
+            "code": "DEMOBANK1",
+            "currencyCode": "KRW",
+            "collectedFee": "100",
+            "amount": "9900"
+        },
+        {
+            "code": "DEMOBANK2",
+            "currencyCode": "JPY",
+            "collectedFee": "10.825452",
+            "amount": "1071.719748"
+        },
+        {
+            "code": "DEMOBANK3",
+            "currencyCode": "USD",
+            "collectedFee": "0.071527",
+            "amount": "7.081131"
+        }
+    ],
+    "sender": {
+        "firstname": "PARK",
+        "lastname": "SEUNGJIN",
+        "accountNumber": 1111111111
+    },
+    "receiver": {
+        "firstname": "JHON",
+        "lastname": "DOE",
+        "accountNumber": 2222222222
+    }
+}
