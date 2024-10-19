@@ -1,6 +1,18 @@
+import { Contract, Gateway, Network } from 'fabric-network';
 import path from 'path';
 
-export const getConfiguration = () => {
+const getConfiguration = (): {
+    port: number;
+    channelName: string;
+    chaincodeName: string;
+    orgNum: number;
+    userId: string;
+    mspOrg: string;
+    walletPath: string;
+    gateway: Gateway;
+    network: Network | null;
+    contract: Contract | null;
+} => {
     const port = parseInt(process.env.PORT || '3000');
     const channelName = process.env.CHANNEL_NAME || '';
     const chaincodeName = process.env.CHAINCODE_NAME || '';
@@ -29,5 +41,10 @@ export const getConfiguration = () => {
         userId,
         mspOrg,
         walletPath,
+        gateway: new Gateway(),
+        network: null,
+        contract: null,
     };
 };
+
+export const configuration = getConfiguration();
