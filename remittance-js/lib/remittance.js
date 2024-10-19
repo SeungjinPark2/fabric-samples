@@ -222,6 +222,9 @@ class Remittance extends Contract {
             `transaction:${txObject.id}`,
             Buffer.from(stateObj)
         );
+
+        // 트렌젝션 생성 이벤트 발생.
+        await ctx.stub.setEvent('txCreated', Buffer.from(stateObj));
         return stateObj;
     }
 
@@ -260,6 +263,7 @@ class Remittance extends Contract {
 
         const stateObj = stringify(sortKeysRecursive(tx));
         await ctx.stub.putState(`transaction:${id}`, Buffer.from(stateObj));
+        await ctx.stub.setEvent('txApproved', Buffer.from(stateObj));
 
         return stateObj;
     }
