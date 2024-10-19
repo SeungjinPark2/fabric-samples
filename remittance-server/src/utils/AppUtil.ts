@@ -10,8 +10,17 @@ import * as path from 'path';
 
 const buildCCPOrg = (org: number): Record<string, any> => {
     // load the common connection configuration file
-    const ccpPath = path.resolve(__dirname, '..', '..', '..', 'test-network',
-        'organizations', 'peerOrganizations', `org${org}.example.com`, `connection-org${org}.json`);
+    const ccpPath = path.resolve(
+        __dirname,
+        '..',
+        '..',
+        '..',
+        'test-network',
+        'organizations',
+        'peerOrganizations',
+        `org${org}.example.com`,
+        `connection-org${org}.json`
+    );
     const fileExists = fs.existsSync(ccpPath);
     if (!fileExists) {
         throw new Error(`no such file or directory: ${ccpPath}`);
@@ -29,7 +38,6 @@ const buildWallet = async (walletPath: string): Promise<Wallet> => {
     // Create a new  wallet : Note that wallet is for managing identities.
     let wallet: Wallet;
     if (walletPath) {
-
         // remove any pre-existing wallet from prior runs
         // fs.rmSync(walletPath, { recursive: true, force: true });
 
@@ -45,14 +53,10 @@ const buildWallet = async (walletPath: string): Promise<Wallet> => {
 
 const prettyJSONString = (inputString: string): string => {
     if (inputString) {
-         return JSON.stringify(JSON.parse(inputString), null, 2);
+        return JSON.stringify(JSON.parse(inputString), null, 2);
     } else {
-         return inputString;
+        return inputString;
     }
 };
 
-export {
-    buildCCPOrg,
-    buildWallet,
-    prettyJSONString,
-};
+export { buildCCPOrg, buildWallet, prettyJSONString };
