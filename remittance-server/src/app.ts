@@ -1,11 +1,5 @@
-/*
- * Copyright IBM Corp. All Rights Reserved.
- *
- * SPDX-License-Identifier: Apache-2.0
- */
-import { Contract, Gateway, GatewayOptions } from 'fabric-network';
-import * as path from 'path';
-import { buildCCPOrg, buildWallet, prettyJSONString } from './utils//AppUtil';
+import { Contract, Gateway, GatewayOptions, Network } from 'fabric-network';
+import { buildCCPOrg, buildWallet } from './utils//AppUtil';
 import {
     buildCAClient,
     enrollAdmin,
@@ -15,91 +9,70 @@ import 'dotenv/config';
 import express, { Request, Response, NextFunction } from 'express';
 import bodyParser from 'body-parser';
 import 'express-async-errors';
-import { uuid } from 'uuidv4';
+import { getConfiguration } from './utils/config';
 
+const conf = getConfiguration();
 const app = express();
 
-const port = parseInt(process.env.PORT || '3000');
-const channelName = process.env.CHANNEL_NAME || '';
-const chaincodeName = process.env.CHAINCODE_NAME || '';
-const orgNum = parseInt(process.env.ORGNUM || '0') || 0;
-const mspOrg = `Org${orgNum}MSP`;
-const userId = process.env.USERID || '';
-const skipInit: boolean = process.env.SKIPINIT === 'true';
-const skipChaincodeInit: boolean = process.env.SKIP_CHAINCODE_INIT === 'true';
-
-const walletPath = path.join(__dirname, 'wallet', `org${orgNum}`);
-
 let gateway: Gateway;
-let network;
+let network: Network;
 let contract: Contract;
 
-async function createNetwork(
+async function connectGateway(
     ccp: Record<string, any>,
-    gatewayOpts: GatewayOptions
+    gatewayOpts: GatewayOptions,
+    channelName: string,
+    chaincodeName: string
 ) {
     await gateway.connect(ccp, gatewayOpts);
     network = await gateway.getNetwork(channelName);
     contract = network.getContract(chaincodeName);
 }
 
-async function setup() {
-    try {
-        const ccp = buildCCPOrg(orgNum);
-        const caClient = buildCAClient(ccp, `ca.org${orgNum}.example.com`);
-        const wallet = await buildWallet(walletPath);
-
-        if (!skipInit) {
-            await enrollAdmin(caClient, wallet, mspOrg);
-            await registerAndEnrollUser(
-                caClient,
-                wallet,
-                mspOrg,
-                userId,
-                `org${orgNum}.department1`
-            );
-        }
-
-        gateway = new Gateway();
-
-        const gatewayOpts: GatewayOptions = {
-            wallet,
-            identity: 'admin',
-            discovery: { enabled: true, asLocalhost: true },
-        };
-
-        await createNetwork(ccp, gatewayOpts);
-
-        if (!skipChaincodeInit) {
-            console.log(
-                '\n--> Submit Transaction: InitLedger, function creates the initial set of assets on the ledger'
-            );
-            await contract.submitTransaction(
-                'Init',
-                'fxr_live_b1e7580ba98491842a59797583c3d681e5af',
-                'https://api.fxratesapi.com/'
-            );
-            console.log('*** Result: committed');
-        }
-
-        gateway.disconnect();
-        gatewayOpts.identity = userId;
-        await createNetwork(ccp, gatewayOpts);
-    } catch (error) {
-        console.error(`******** FAILED to run the application: ${error}`);
-        process.exit(1);
-    }
-}
-
-setup();
-
 app.use(bodyParser.json());
 
-app.get('/bank', async (req: Request, res: Response, next: NextFunction) => {
-    const code = req.query.code as string | undefined;
+app.post('/gateway', async (_req: Request, res: Response) => {
+    const ccp = buildCCPOrg(conf.orgNum);
+    const caClient = buildCAClient(ccp, `ca.org${conf.orgNum}.example.com`);
+    const wallet = await buildWallet(conf.walletPath);
+
+    await enrollAdmin(caClient, wallet, conf.mspOrg);
+    await registerAndEnrollUser(
+        caClient,
+        wallet,
+        conf.mspOrg,
+        conf.userId,
+        `org${conf.orgNum}.department1`
+    );
+
+    gateway = new Gateway();
+
+    const gatewayOpts: GatewayOptions = {
+        wallet,
+        identity: conf.userId,
+        discovery: { enabled: true, asLocalhost: true },
+    };
+
+    await connectGateway(
+        ccp,
+        gatewayOpts,
+        conf.channelName,
+        conf.chaincodeName
+    );
+
+    res.status(200);
+});
+
+app.post('/init', async (req: Request, res: Response) => {
+    // init chaincode
+});
+
+app.get('/bank', async (req: Request, res: Response, _next: NextFunction) => {
+    const code = req.query.code;
+    if (code == null) res.status(400);
 
     const result = (
-        await contract.evaluateTransaction('ReadBank', code ?? '')
+        await contract.evaluateTransaction('ReadBank', code as string)
     ).toString();
 
     res.send(JSON.parse(result));
@@ -107,29 +80,22 @@ app.get('/bank', async (req: Request, res: Response, next: NextFunction) => {
 
 app.get(
     '/transaction',
-    async (req: Request, res: Response, next: NextFunction) => {
-        const id = req.query.id as string;
+    async (req: Request, res: Response, _next: NextFunction) => {
+        const id = req.query.id;
+        if (id == null) res.status(400);
 
         const result = (
-            await contract.evaluateTransaction('ReadTransaction', id)
+            await contract.evaluateTransaction('ReadTransaction', id as string)
         ).toString();
 
         res.send(JSON.parse(result));
     }
 );
 
-app.get('/receipt', async (req: Request, res: Response, next: NextFunction) => {
-    const id = req.query.id as string;
+app.post('/bank', async (req: Request, res: Response, _next: NextFunction) => {
+    const currencyCode = req.body.currencyCode;
+    if (currencyCode == null) res.status(400);
 
-    const result = (
-        await contract.evaluateTransaction('ReadReceipt', id)
-    ).toString();
-
-    res.send(JSON.parse(result));
-});
-
-app.post('/bank', async (req: Request, res: Response, next: NextFunction) => {
-    const currencyCode = req.body.currencyCode ?? 'KRW';
     const result = (
         await contract.submitTransaction('RegisterBank', currencyCode)
     ).toString();
@@ -138,98 +104,22 @@ app.post('/bank', async (req: Request, res: Response, next: NextFunction) => {
 });
 
 app.post(
-    '/account',
-    async (req: Request, res: Response, next: NextFunction) => {
-        const code = req.body.code ?? '';
-        const result = (
-            await contract.submitTransaction('CreateAccount', code)
-        ).toString();
-
-        res.send(JSON.parse(result));
-    }
-);
-
-app.post(
-    '/liquidity',
-    async (req: Request, res: Response, next: NextFunction) => {
-        const targetCode = req.body.code ?? '';
-        const liquidity = req.body.liquidity ?? '';
-
-        const result = (
-            await contract.submitTransaction(
-                'ApplyLiquidity',
-                targetCode,
-                liquidity,
-                ''
-            )
-        ).toString();
-
-        res.send(JSON.parse(result));
-    }
-);
-
-type PersonInfo = {
-    address: string;
-    name: string;
-    birthday: number;
-    phoneNumber: string;
-};
-
-type Participant = {
-    code: string;
-    type: 'sender' | 'receiver' | 'intermediary';
-};
-
-app.post(
     '/transaction',
-    async (req: Request, res: Response, next: NextFunction) => {
-        const id = uuid();
-        const senderInfo = JSON.stringify(req.body.senderInfo as PersonInfo);
-        const receiverInfo = JSON.stringify(
-            req.body.receiverInfo as PersonInfo
-        );
-        const value = req.body.value as string;
-        const participants = JSON.stringify(
-            req.body.participants as Participant[]
-        );
-        console.log(req.body);
-
-        const result = (
-            await contract.submitTransaction(
-                'ProposeTransaction',
-                id,
-                senderInfo,
-                receiverInfo,
-                value,
-                participants
-            )
-        ).toString();
-
-        res.send(JSON.parse(result));
+    async (req: Request, res: Response, _next: NextFunction) => {
+        // propose transaction
     }
 );
+
+app.get('/preflight', (req: Request, res: Response, _next: NextFunction) => {
+    // preflight transaction
+});
 
 app.post(
     '/approve',
-    async (req: Request, res: Response, next: NextFunction) => {
-        const txid = req.body.id ?? '';
-        const choice = req.body.choice ?? '';
-        const reason = req.body.reason ?? '';
-
-        const result = (
-            await contract.submitTransaction(
-                'ApproveTransaction',
-                txid,
-                choice,
-                reason
-            )
-        ).toString();
-
-        res.send(JSON.parse(result));
-    }
+    async (req: Request, res: Response, _next: NextFunction) => {}
 );
 
-app.use((err: Error, req: Request, res: Response, next: NextFunction) => {
+app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
     console.error(err.stack);
     res.status(500).json({
         message: err.message,
@@ -237,16 +127,16 @@ app.use((err: Error, req: Request, res: Response, next: NextFunction) => {
     });
 });
 
-app.listen(port, () => {
+app.listen(conf.port, () => {
     console.log(`
       ################################################
-      🛡️  Server listening on port: ${port}
+      🛡️  Server listening on port: ${conf.port}
       ################################################
     `);
 });
 
 ['SIGINT', 'SIGTERM'].forEach((sig) => {
-    process.on(sig, async function () {
+    process.on(sig, () => {
         // Do some cleanup such as close db
         console.log('program accepted interrupt! getting exited...');
         gateway.disconnect();

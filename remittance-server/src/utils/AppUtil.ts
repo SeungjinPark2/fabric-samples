@@ -1,15 +1,10 @@
-/*
- * Copyright IBM Corp. All Rights Reserved.
- *
- * SPDX-License-Identifier: Apache-2.0
- */
-
 import { Wallet, Wallets } from 'fabric-network';
 import * as fs from 'fs';
 import * as path from 'path';
 
 const buildCCPOrg = (org: number): Record<string, any> => {
     // load the common connection configuration file
+    // docker mount 시키기
     const ccpPath = path.resolve(
         __dirname,
         '..',
