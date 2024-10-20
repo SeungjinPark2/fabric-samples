@@ -1,6 +1,7 @@
 import { Wallet, Wallets } from 'fabric-network';
 import * as fs from 'fs';
 import * as path from 'path';
+import { configuration } from './config';
 
 const buildCCPOrg = (org: number): Record<string, any> => {
     // load the common connection configuration file
@@ -9,10 +10,8 @@ const buildCCPOrg = (org: number): Record<string, any> => {
         __dirname,
         '..',
         '..',
-        '..',
-        'test-network',
-        'organizations',
-        'peerOrganizations',
+        // 위까지는 project root 디렉터리를 나타냄
+        configuration.peerOrgPath, // peerOrganization path
         `org${org}.example.com`,
         `connection-org${org}.json`
     );

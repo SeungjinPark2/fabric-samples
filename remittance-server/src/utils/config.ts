@@ -1,5 +1,6 @@
 import { Contract, Gateway, Network } from 'fabric-network';
 import path from 'path';
+import 'dotenv/config';
 
 const getConfiguration = (): {
     port: number;
@@ -9,6 +10,7 @@ const getConfiguration = (): {
     userId: string;
     mspOrg: string;
     walletPath: string;
+    peerOrgPath: string;
     gateway: Gateway;
     jwtsecret: string;
     network: Network | null;
@@ -21,6 +23,9 @@ const getConfiguration = (): {
     const userId = process.env.USERID || '';
     const mspOrg = `Org${orgNum}MSP`;
     const jwtsecret = process.env.JWTSECRET || '';
+    const peerOrgPath =
+        process.env.PEERORGPATH ||
+        '../test-network/organizations/peerOrganizations';
     const walletPath = path.join(__dirname, '..', 'wallet', `org${orgNum}`);
 
     console.log(`
@@ -32,6 +37,7 @@ const getConfiguration = (): {
         userId: ${userId}
         mspOrg: ${mspOrg}
         walletPath: ${walletPath}
+        peerOrgPath: ${peerOrgPath}
         jwtsecret: ${jwtsecret}
         ----------------- env variables -----------------
         `);
@@ -44,6 +50,7 @@ const getConfiguration = (): {
         userId,
         mspOrg,
         walletPath,
+        peerOrgPath,
         jwtsecret,
         gateway: new Gateway(),
         network: null,
