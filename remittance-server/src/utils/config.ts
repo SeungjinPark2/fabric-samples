@@ -10,6 +10,7 @@ const getConfiguration = (): {
     mspOrg: string;
     walletPath: string;
     gateway: Gateway;
+    jwtsecret: string;
     network: Network | null;
     contract: Contract | null;
 } => {
@@ -19,6 +20,7 @@ const getConfiguration = (): {
     const orgNum = parseInt(process.env.ORGNUM || '0');
     const userId = process.env.USERID || '';
     const mspOrg = `Org${orgNum}MSP`;
+    const jwtsecret = process.env.JWTSECRET || '';
     const walletPath = path.join(__dirname, '..', 'wallet', `org${orgNum}`);
 
     console.log(`
@@ -30,6 +32,7 @@ const getConfiguration = (): {
         userId: ${userId}
         mspOrg: ${mspOrg}
         walletPath: ${walletPath}
+        jwtsecret: ${jwtsecret}
         ----------------- env variables -----------------
         `);
 
@@ -41,6 +44,7 @@ const getConfiguration = (): {
         userId,
         mspOrg,
         walletPath,
+        jwtsecret,
         gateway: new Gateway(),
         network: null,
         contract: null,
