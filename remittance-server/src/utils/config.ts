@@ -13,6 +13,9 @@ const getConfiguration = (): {
     peerOrgPath: string;
     gateway: Gateway;
     jwtsecret: string;
+    fxRateAPIToken: string;
+    fxRateAPIEnpoint: string;
+    currencyCode: string;
     network: Network | null;
     contract: Contract | null;
 } => {
@@ -27,7 +30,9 @@ const getConfiguration = (): {
         process.env.PEERORGPATH ||
         '../test-network/organizations/peerOrganizations';
     const walletPath = path.join(__dirname, '..', 'wallet', `org${orgNum}`);
-
+    const fxRateAPIToken = process.env.FXRATE_API_TOKEN || '';
+    const fxRateAPIEnpoint = process.env.FXRATE_API_ENDPOINT || '';
+    const currencyCode = process.env.CURRENCY_CODE || 'KRW';
     console.log(`
         ----------------- env variables -----------------
         port: ${port}
@@ -39,6 +44,7 @@ const getConfiguration = (): {
         walletPath: ${walletPath}
         peerOrgPath: ${peerOrgPath}
         jwtsecret: ${jwtsecret}
+        currencyCode: ${currencyCode}
         ----------------- env variables -----------------
         `);
 
@@ -52,6 +58,9 @@ const getConfiguration = (): {
         walletPath,
         peerOrgPath,
         jwtsecret,
+        fxRateAPIToken,
+        fxRateAPIEnpoint,
+        currencyCode,
         gateway: new Gateway(),
         network: null,
         contract: null,

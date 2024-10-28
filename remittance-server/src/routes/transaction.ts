@@ -27,9 +27,12 @@ router.post(
     }
 );
 
-router.get('/preflight', (req: Request, res: Response, _next: NextFunction) => {
-    // preflight transaction
-});
+router.post(
+    '/preflight',
+    (req: Request, res: Response, _next: NextFunction) => {
+        // preflight transaction
+    }
+);
 
 router.post(
     '/approve',

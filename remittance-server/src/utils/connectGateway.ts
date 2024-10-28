@@ -8,6 +8,7 @@ export const connectGateway = async (
     chaincodeName: string
 ) => {
     await configuration.gateway.connect(ccp, gatewayOpts);
+    console.log('---gateway connection established---');
     configuration.network = await configuration.gateway.getNetwork(channelName);
     configuration.contract = configuration.network.getContract(chaincodeName);
 };
