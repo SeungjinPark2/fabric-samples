@@ -109,7 +109,7 @@ describe('Remittance Tests', () => {
                 await chaincodeStub.getState(`bank:${banks[0].code}`)
             );
 
-            expect(ret.correnpondentBanks.find((b) => b === banks[1].code)).not
+            expect(ret.correspondentBanks.find((b) => b === banks[1].code)).not
                 .to.be.undefined;
         });
 

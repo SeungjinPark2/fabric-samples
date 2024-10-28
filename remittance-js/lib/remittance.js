@@ -49,7 +49,7 @@ class Remittance extends Contract {
             sortKeysRecursive({
                 code: bankCode,
                 currencyCode,
-                correnpondentBanks /*: string[] */: [],
+                correspondentBanks /*: string[] */: [],
             })
         );
 
@@ -62,7 +62,7 @@ class Remittance extends Contract {
     async CreateAccount(ctx, bankCode) {
         const ourCode = ctx.clientIdentity.getAttributeValue('hf.EnrollmentID');
         const self = stateParser(await this.ReadBank(ctx, ourCode));
-        const exists = self.correnpondentBanks.find((c) => c === bankCode);
+        const exists = self.correspondentBanks.find((c) => c === bankCode);
 
         if (exists) {
             throw new Error(
@@ -70,7 +70,7 @@ class Remittance extends Contract {
             );
         }
 
-        self.correnpondentBanks.push(bankCode);
+        self.correspondentBanks.push(bankCode);
         const stateObj = stringify(sortKeysRecursive(self));
         await ctx.stub.putState(`bank:${self.code}`, Buffer.from(stateObj));
 
@@ -90,7 +90,7 @@ class Remittance extends Contract {
 
         const cb = stateParser(await this.ReadBank(ctx, cr[cr.length - 1]));
 
-        for (const cc of cb.correnpondentBanks) {
+        for (const cc of cb.correspondentBanks) {
             if (cr.find((_c) => _c === cc) != null) continue; // 이제껏 선택해온 것은 들여다 보지 않음.
             cr.push(cc);
 

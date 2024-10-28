@@ -3,32 +3,32 @@
         {
             "code": "DEMOBANK1",
             "currencyCode": "KRW",
-            "correnpondentBanks": []
+            "correspondentBanks": []
         },
         {
             "code": "DEMOBANK2",
             "currencyCode": "JPY",
-            "correnpondentBanks": []
+            "correspondentBanks": []
         },
         {
             "code": "DEMOBANK3",
             "currencyCode": "USD",
-            "correnpondentBanks": []
+            "correspondentBanks": []
         },
         {
             "code": "DEMOBANK4",
             "currencyCode": "RUB",
-            "correnpondentBanks": []
+            "correspondentBanks": []
         },
         {
             "code": "DEMOBANK5",
             "currencyCode": "EUR",
-            "correnpondentBanks": []
+            "correspondentBanks": []
         },
         {
             "code": "DEMOBANK6",
             "currencyCode": "MXN",
-            "correnpondentBanks": []
+            "correspondentBanks": []
         }
     ],
     "preparedTx": [
