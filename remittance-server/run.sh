@@ -1,12 +1,14 @@
 #!/bin/bash
 
 IMAGE=$1
-NAME=$2
+PORT=$2
 
 docker run -it \
+    --name $IMAGE \
     --rm \
-    --name $NAME \
     -e NODE_ENV=prod \
+    -p $PORT:3000 \
+    -v $(pwd)/src/wallet/:/opt/dist/wallet/ \
     --network fabric_test \
     $IMAGE
     
