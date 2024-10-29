@@ -10,7 +10,6 @@ const getConfiguration = (): {
     userId: string;
     mspOrg: string;
     walletPath: string;
-    peerOrgPath: string;
     gateway: Gateway;
     jwtsecret: string;
     fxRateAPIToken: string;
@@ -26,9 +25,6 @@ const getConfiguration = (): {
     const userId = process.env.USERID || '';
     const mspOrg = `Org${orgNum}MSP`;
     const jwtsecret = process.env.JWTSECRET || '';
-    const peerOrgPath =
-        process.env.PEERORGPATH ||
-        '../test-network/organizations/peerOrganizations';
     const walletPath = path.join(__dirname, '..', 'wallet', `org${orgNum}`);
     const fxRateAPIToken = process.env.FXRATE_API_TOKEN || '';
     const fxRateAPIEnpoint = process.env.FXRATE_API_ENDPOINT || '';
@@ -42,9 +38,9 @@ const getConfiguration = (): {
         userId: ${userId}
         mspOrg: ${mspOrg}
         walletPath: ${walletPath}
-        peerOrgPath: ${peerOrgPath}
         jwtsecret: ${jwtsecret}
         currencyCode: ${currencyCode}
+        nodeenv: ${process.env.NODE_ENV}
         ----------------- env variables -----------------
         `);
 
@@ -56,7 +52,6 @@ const getConfiguration = (): {
         userId,
         mspOrg,
         walletPath,
-        peerOrgPath,
         jwtsecret,
         fxRateAPIToken,
         fxRateAPIEnpoint,

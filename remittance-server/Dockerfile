@@ -11,10 +11,11 @@ RUN npm run build
 FROM node:alpine
 
 WORKDIR opt/
-RUN mkdir peerOrganizations
+RUN mkdir ccp
 
 COPY --from=builder /temp/dist/ ./dist/
 COPY --from=builder /temp/node_modules/ ./node_modules/
+COPY ccp/ ./ccp/
 COPY .env .
 
 CMD ["dist/app.js"]

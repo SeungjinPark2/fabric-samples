@@ -28,7 +28,10 @@ export const init = async () => {
     const gatewayOpts: GatewayOptions = {
         wallet,
         identity: configuration.userId,
-        discovery: { enabled: true, asLocalhost: true },
+        discovery: {
+            enabled: true,
+            asLocalhost: process.env.NODE_ENV !== 'prod',
+        },
     };
 
     await connectGateway(
