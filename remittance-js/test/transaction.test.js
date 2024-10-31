@@ -75,11 +75,11 @@ describe('Remittance Tests', () => {
     describe('ProposeTransaction', () => {
         it('should work without error', async () => {
             prank(clientIdentity, banks[0].code);
-            const txObject = {
+            const txObject = JSON.stringify({
                 sender,
                 receiver,
                 agreements: preparedTx,
-            };
+            });
             const ret = JSON.parse(
                 await remittance.ProposeTransaction(
                     transactionContext,
@@ -122,11 +122,11 @@ describe('Remittance Tests', () => {
     describe('ApproveTransaction', () => {
         it('should make tx status rejected', async () => {
             prank(clientIdentity, banks[0].code);
-            const txObject = {
+            const txObject = JSON.stringify({
                 sender,
                 receiver,
                 agreements: preparedTx,
-            };
+            });
             let ret = JSON.parse(
                 await remittance.ProposeTransaction(
                     transactionContext,

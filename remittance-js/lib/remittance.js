@@ -6,7 +6,6 @@ const { Contract } = require('fabric-contract-api');
 const { BigNumber } = require('bignumber.js');
 const { stateParser } = require('../utils');
 const { getFxRate } = require('./getFxRate');
-const { uuid } = require('uuidv4');
 
 const TxStatus = {
     ONGOING: 0,
@@ -110,7 +109,9 @@ class Remittance extends Contract {
     }
 
     // 트렌젝션 시뮬레이션, 참여자 및 수수료 등 미리 확인.
-    async PreflightTx(ctx, sender, receiver, receiverBankCode, amount) {
+    async PreflightTx(ctx, _sender, _receiver, receiverBankCode, amount) {
+        const sender = JSON.parse(sender);
+        const receiver = JSON.parse(receiver);
         const metadata = JSON.parse(await ctx.stub.getState('metadata'));
         const fee = metadata.fee / 100; // 수수료율
         const senderBankCode =
@@ -118,6 +119,10 @@ class Remittance extends Contract {
 
         const routes /*: code[]*/ = [];
         await this.FindRoutes(ctx, receiverBankCode, routes, [senderBankCode]);
+
+        if (routes.length === 0) {
+            throw new Error('Can not find any route');
+        }
 
         const preparedTxs = [];
 
@@ -202,8 +207,9 @@ class Remittance extends Contract {
         ...
     ]
     */
-    async ProposeTransaction(ctx, txObject) {
+    async ProposeTransaction(ctx, _txObject) {
         const code = ctx.clientIdentity.getAttributeValue('hf.EnrollmentID');
+        const txObject = JSON.parse(_txObject);
 
         txObject.agreements = txObject.agreements.map((t) => ({
             ...t,
@@ -213,7 +219,8 @@ class Remittance extends Contract {
                     : AgreementStatus.ONGOING, // 발의한 은행은 동의한것으로 간주
         }));
 
-        txObject.id = uuid();
+        // hash를 만드는 것이 바람직하지만 일단은 base64로 진행
+        txObject.id = Buffer.from(JSON.stringify(txObject)).toString('base64');
         txObject.status = AgreementStatus.ONGOING;
         txObject.reason = '';
 

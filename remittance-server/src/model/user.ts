@@ -10,4 +10,13 @@ export type User = {
     account: Account;
 };
 
-export type Role = 'USER' | 'ADMIN';
+export type SimplifiedUserInfo = {
+    firstname: string;
+    lastname: string;
+    accountNumber: string;
+};
+
+export enum Role {
+    USER = 'USER',
+    ADMIN = 'ADMIN',
+}

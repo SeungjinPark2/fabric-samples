@@ -44,6 +44,8 @@ describe('Remittance Tests', () => {
         it('should save proper data', async () => {
             const getStateResult = await chaincodeStub.getState('metadata');
             const fMetadata = stateParser(getStateResult);
+            console.log(fMetadata);
+            console.log(metadata);
             expect(fMetadata).eql(metadata);
         });
     });

@@ -7,10 +7,6 @@ import { Role } from '../model/user';
 
 export const router = Router();
 
-router.get('/', (req, res) => {
-    res.json({ foo: 'bar' });
-});
-
 router.post('/signup', async (req: Request, res: Response) => {
     const { username, password, firstName, lastName } = req.body; // TODO fix "Name" things..
 
@@ -28,7 +24,7 @@ router.post('/signup', async (req: Request, res: Response) => {
         id: users.length + 1,
         username,
         password: hashedPassword,
-        role: 'USER' as Role,
+        role: Role.USER,
         firstname: firstName,
         lastname: lastName,
         account: {
@@ -62,10 +58,10 @@ router.post('/login', async (req: Request, res: Response) => {
 
     // JWT 토큰 발급
     const token = jwt.sign(
-        { id: user.id, username: user.username },
+        { id: user.id, username: user.username, role: user.role },
         configuration.jwtsecret,
         {
-            expiresIn: '1h',
+            expiresIn: '12h',
         }
     );
 

@@ -1,4 +1,4 @@
-import { GatewayOptions } from 'fabric-network';
+import { ContractListener, GatewayOptions } from 'fabric-network';
 import { buildCCPOrg, buildWallet } from './utils/AppUtil';
 import {
     buildCAClient,
@@ -7,6 +7,8 @@ import {
 } from './utils/CAUtil';
 import { configuration } from './utils/config';
 import { connectGateway } from './utils/connectGateway';
+import { txs } from './tempDB';
+import { TxObject } from './model/transaction';
 
 export const init = async () => {
     const ccp = buildCCPOrg(configuration.orgNum);
@@ -66,4 +68,23 @@ export const init = async () => {
     } catch (error) {
         console.log(error);
     }
+
+    // 체인코드 이벤트 리스너등록
+    const listener: ContractListener = async (event) => {
+        const eventPayload: TxObject = JSON.parse(
+            (event.payload as Buffer).toString('utf8')
+        );
+
+        if (event.eventName === 'txCreated') {
+            console.log(eventPayload);
+            txs.push(eventPayload);
+        }
+
+        if (event.eventName === 'txApproved') {
+            const idx = txs.findIndex((tx) => tx.id === eventPayload.id);
+            txs[idx] = eventPayload;
+        }
+    };
+
+    await contract.addContractListener(listener);
 };
