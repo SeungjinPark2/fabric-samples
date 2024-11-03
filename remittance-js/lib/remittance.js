@@ -110,8 +110,8 @@ class Remittance extends Contract {
 
     // 트렌젝션 시뮬레이션, 참여자 및 수수료 등 미리 확인.
     async PreflightTx(ctx, _sender, _receiver, receiverBankCode, amount) {
-        const sender = JSON.parse(sender);
-        const receiver = JSON.parse(receiver);
+        const sender = JSON.parse(_sender);
+        const receiver = JSON.parse(_receiver);
         const metadata = JSON.parse(await ctx.stub.getState('metadata'));
         const fee = metadata.fee / 100; // 수수료율
         const senderBankCode =
@@ -239,7 +239,7 @@ class Remittance extends Contract {
         ctx,
         id,
         choice /* 'approve' | 'reject' */,
-        reason = ''
+        reason
     ) {
         const code = ctx.clientIdentity.getAttributeValue('hf.EnrollmentID');
         const tx = stateParser(await this.ReadTransaction(ctx, id));

@@ -7,8 +7,10 @@ import {
 } from './utils/CAUtil';
 import { configuration } from './utils/config';
 import { connectGateway } from './utils/connectGateway';
-import { txs } from './tempDB';
-import { TxObject } from './model/transaction';
+import { txs, users } from './tempDB';
+import { Status, TxObject } from './model/transaction';
+import { User } from './model/user';
+import BigNumber from 'bignumber.js';
 
 export const init = async () => {
     const ccp = buildCCPOrg(configuration.orgNum);
@@ -76,13 +78,47 @@ export const init = async () => {
         );
 
         if (event.eventName === 'txCreated') {
-            console.log(eventPayload);
             txs.push(eventPayload);
         }
 
         if (event.eventName === 'txApproved') {
             const idx = txs.findIndex((tx) => tx.id === eventPayload.id);
             txs[idx] = eventPayload;
+
+            // 반영하기
+            if (eventPayload.status === Status.DONE) {
+                const index = eventPayload.agreements.findIndex((agreement) => {
+                    return agreement.code === configuration.userId;
+                });
+
+                // 중개 은행은 해당 은행의 양측 은행 계좌부분을 반영해주어야 하는 것이 정상이다.
+                // 보여주기 용도, 프로토타입이므로 해당 부분은 건너뛰고 전송자와 수신자의 잔고만 처리해주도록 하자.
+                if (index === 0) {
+                    const sender = users.find(
+                        (u) =>
+                            u.firstname === eventPayload.sender.firstname &&
+                            u.lastname === eventPayload.sender.lastname
+                    ) as User;
+                    let balance = new BigNumber(sender.account.balance)
+                        .minus(eventPayload.agreements[index].amount)
+                        .minus(eventPayload.agreements[index].collectedFee);
+                    sender.account.balance = balance
+                        .decimalPlaces(0, 1)
+                        .toNumber();
+                } else if (index === eventPayload.agreements.length - 1) {
+                    const receiver = users.find(
+                        (u) =>
+                            u.firstname === eventPayload.receiver.firstname &&
+                            u.lastname === eventPayload.receiver.lastname
+                    ) as User;
+                    let balance = new BigNumber(receiver.account.balance).plus(
+                        eventPayload.agreements[index].amount
+                    );
+                    receiver.account.balance = balance
+                        .decimalPlaces(0, 1)
+                        .toNumber();
+                }
+            }
         }
     };
 

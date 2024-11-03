@@ -10,3 +10,5 @@ docker build -t usbank .
 
 cp .env.mxbank .env
 docker build -t mxbank .
+
+cp .env.krbank .env

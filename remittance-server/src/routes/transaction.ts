@@ -95,5 +95,18 @@ router.post(
 
 router.post(
     '/approve',
-    async (req: Request, res: Response, _next: NextFunction) => {}
+    async (req: Request, res: Response, _next: NextFunction) => {
+        const approvedTx = JSON.parse(
+            (
+                await (configuration.contract as Contract).submitTransaction(
+                    'ApproveTransaction',
+                    req.body.id,
+                    req.body.choice,
+                    req.body.reason
+                )
+            ).toString()
+        );
+
+        res.send(approvedTx);
+    }
 );
